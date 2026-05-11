@@ -6,7 +6,7 @@ import { useUrlParam } from "../hooks/useUrlState";
 import { classify, type ColumnProfile } from "../plots/columns";
 import { directionalColumnNames, unifyColumnGroups, unifyPartners } from "../plots/unify";
 import {
-  AXIS_SCOPES,
+  PANEL_SCOPES,
   encodeUnfilterList,
   encodeVizParam,
   isPanelUnfiltered,
@@ -15,7 +15,7 @@ import {
   toggleUnfilter,
   UNFILTER_PARAM_KEY,
   vizParamKey,
-  type AxisScope,
+  type PanelScope,
   type PlotBindings,
 } from "../plots/urlState";
 import type { DynamicPlotDescriptor } from "../plots/registry";
@@ -210,8 +210,8 @@ export function DynamicPlotPanel({
   const setChannel = (ch: Channel, value: string | null) => {
     writeBindings({ ...bindings, [ch]: value || undefined });
   };
-  const setScope = (axis: "x_scope" | "y_scope", value: AxisScope) => {
-    writeBindings({ ...bindings, [axis]: value });
+  const setScope = (value: PanelScope) => {
+    writeBindings({ ...bindings, scope: value });
   };
   // Default ON — only persist `false` to keep URL state minimal. Encoder
   // already drops `true`/`undefined` from the JSON for the same reason.
@@ -280,10 +280,11 @@ export function DynamicPlotPanel({
   const options = useMemo(() => listColumnOptions(bundle), [bundle]);
 
   // Synapse-group columns that come in `_in` / `_out` directional pairs.
-  // Used to filter options per-channel based on the axis scope: when an
-  // axis is restricted to Input or Output, the opposite-direction variants
-  // are redundant (the scope filter has already removed those rows). Only
-  // shown when scope=Both, where the per-direction split is the whole point.
+  // Used to filter options based on the panel scope: when scope is Input
+  // or Output, the opposite-direction variants are redundant (the scope
+  // filter already removed those rows; the variant would only contain
+  // nulls). On Both / Reciprocal, both variants stay visible — the
+  // per-direction split is the whole point of those scopes.
   const directionalKeys = useMemo(() => {
     const directional = directionalColumnNames(bundle.column_groups);
     const set = new Set<string>(["n_syn_in", "n_syn_out"]);
@@ -315,8 +316,7 @@ export function DynamicPlotPanel({
   // the moment it's chosen on a numeric-x case.
   const haveBar = !!bindings.x && !bindings.y && (!xIsNumeric || !!bindings.weight);
 
-  const xScope: AxisScope = (bindings.x_scope ?? "both") as AxisScope;
-  const yScope: AxisScope = (bindings.y_scope ?? "both") as AxisScope;
+  const scope: PanelScope = (bindings.scope ?? "both") as PanelScope;
 
   // Cell-position toggle visibility. The backend only draws the marker when
   // at least one bound axis maps to a cell-position family (depth-shaped,
@@ -341,23 +341,20 @@ export function DynamicPlotPanel({
         ? "Hide cell soma reference (dashed black line at the queried cell's position)"
         : "Show queried cell's soma as a dashed black line on the spatial axis";
 
-  // Hue and size aren't axis-bound, so they don't have their own scope. When
-  // both axes agree on a non-Both scope, hue/size adopt that scope (e.g. user
-  // restricted both axes to Input → suppress `_out` from the hue picker too).
-  // Mixed or all-Both scopes → no filtering, show every directional variant.
-  const auxScope: AxisScope = xScope !== "both" && xScope === yScope ? xScope : "both";
-
-  // Hide `_in` / `_out` directional options that don't match the picker's
+  // Hide `_in` / `_out` directional options that don't match the panel
   // scope. Non-directional columns (decoration, soma, cell-type, intrinsic,
-  // synthetic) are always shown.
-  const filterByScope = (opts: ColumnOption[], scope: AxisScope): ColumnOption[] => {
-    if (scope === "both") return opts;
-    return opts.filter((o) => {
+  // synthetic) are always shown. `both` and `reciprocal` keep both variants
+  // visible: under `both` the user is exploring the full population (often
+  // with `direction` bound to hue), under `reciprocal` every row has values
+  // for both directions so the `_in` / `_out` split remains meaningful.
+  const scopedOptions = useMemo(() => {
+    if (scope === "both" || scope === "reciprocal") return options;
+    return options.filter((o) => {
       if (!directionalKeys.has(o.key)) return true;
-      if (scope === "pre") return o.key.endsWith("_in");   // Input → keep _in
-      return o.key.endsWith("_out");                       // post = Output → keep _out
+      if (scope === "input") return o.key.endsWith("_in");
+      return o.key.endsWith("_out");
     });
-  };
+  }, [options, scope, directionalKeys]);
 
   // Header layout: chart-kind chip (left, click to toggle pickers), then
   // the expand and close buttons, then the picker grid wrapping below
@@ -471,6 +468,9 @@ export function DynamicPlotPanel({
       )}
       {pickersOpen && (
         <div className="dynamic-pickers">
+          <span className="dynamic-picker-group scope">
+            <ScopeSelect value={scope} onChange={setScope} />
+          </span>
           {(Object.keys(CHANNEL_LABEL) as Channel[]).map((ch) => {
             const disabledReason =
               (ch === "hue" || ch === "size") && !haveScatter
@@ -479,10 +479,6 @@ export function DynamicPlotPanel({
                   ? "needs categorical x with no y"
                   : null;
             const isAxis = ch === "x" || ch === "y";
-            const scopeAxis = ch === "x" ? "x_scope" : "y_scope";
-            const scopeValue = ch === "x" ? xScope : yScope;
-            const scopeForOptions: AxisScope = ch === "x" ? xScope : ch === "y" ? yScope : auxScope;
-            const scopedOptions = filterByScope(options, scopeForOptions);
             return (
               <span key={ch} className={`dynamic-picker-group${isAxis ? " axis" : ""}`}>
                 <ChannelPicker
@@ -492,12 +488,6 @@ export function DynamicPlotPanel({
                   disabledReason={disabledReason}
                   onChange={(v) => setChannel(ch, v)}
                 />
-                {isAxis && (
-                  <ScopeSelect
-                    value={scopeValue}
-                    onChange={(v) => setScope(scopeAxis, v)}
-                  />
-                )}
               </span>
             );
           })}
@@ -587,43 +577,48 @@ export function DynamicPlotPanel({
 }
 
 interface ScopeSelectProps {
-  value: AxisScope;
-  onChange: (v: AxisScope) => void;
+  value: PanelScope;
+  onChange: (v: PanelScope) => void;
 }
 
-// Labels match the partners-pane tabs ("Output" / "Input" / "Both") instead
-// of the connectomics-internal "pre" / "post" terminology. Keeps the UI
-// consistent — same direction has the same name everywhere in the app. URL
-// values stay `pre` / `post` / `both` so existing shared links don't break.
-const SCOPE_LABEL: Record<AxisScope, string> = {
+// Labels match the partners-pane tabs ("Output" / "Input" / "Both") so the
+// same direction has the same name everywhere. `Reciprocal` is the
+// strict-intersection subset; under `Both` the user can recover the
+// direction split by binding `hue=direction` instead of filtering rows.
+const SCOPE_LABEL: Record<PanelScope, string> = {
   both: "Both",
-  pre: "Input",
-  post: "Output",
+  input: "Input",
+  output: "Output",
+  reciprocal: "Reciprocal",
 };
 
-const SCOPE_TOOLTIP: Record<AxisScope, string> = {
-  both: "all partners (no direction filter)",
-  pre: "input partners (partner is presynaptic to root)",
-  post: "output partners (partner is postsynaptic to root)",
+const SCOPE_TOOLTIP: Record<PanelScope, string> = {
+  both: "all partners (no direction filter; bind hue=direction to color the split)",
+  input: "input partners (n_syn_in > 0; includes reciprocal)",
+  output: "output partners (n_syn_out > 0; includes reciprocal)",
+  reciprocal: "reciprocal partners only (both directions present)",
 };
 
 /**
- * Per-axis pre/post scope selector. Sits next to the channel picker for
- * x and y on dynamic panels (the only place the unified frame is used).
- * Combine x=post, y=pre to isolate reciprocal partners.
+ * Panel-level direction scope selector. One per dynamic panel; applies
+ * uniformly to every channel. Sits at the head of the picker row so the
+ * user reads it as "what population is this whole plot about" before
+ * picking columns.
  */
 function ScopeSelect({ value, onChange }: ScopeSelectProps) {
   return (
-    <select
-      className={`dynamic-scope${value !== "both" ? " active" : ""}`}
-      value={value}
-      onChange={(e) => onChange(e.target.value as AxisScope)}
-      title={`scope: ${SCOPE_TOOLTIP[value]}`}
-    >
-      {AXIS_SCOPES.map((s) => (
-        <option key={s} value={s}>{SCOPE_LABEL[s]}</option>
-      ))}
-    </select>
+    <label className="dynamic-picker" title={`scope: ${SCOPE_TOOLTIP[value]}`}>
+      <span className="dynamic-picker-label">scope</span>
+      <select
+        className={`dynamic-scope${value !== "both" ? " active" : ""}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value as PanelScope)}
+      >
+        {PANEL_SCOPES.map((s) => (
+          <option key={s} value={s}>{SCOPE_LABEL[s]}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 

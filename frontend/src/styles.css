@@ -1083,6 +1083,11 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  /* Fixed gutter so every channel's select starts at the same x — without
+     it the 1-letter axis labels (X / Y) and the longer ones (HUE / SIZE /
+     WEIGHT / SCOPE) make the dropdowns zigzag along the picker rows. */
+  min-width: 48px;
+  text-align: right;
 }
 .dynamic-picker select {
   font-size: 11px;
@@ -1093,25 +1098,34 @@ h1, h2, h3, h4, h5, h6 {
   max-width: 130px;
 }
 
-/* Group an axis picker with its scope select; same row, no extra gap. */
+/* Picker-group container: by default a flex row that wraps with siblings.
+   Scope and axis groups force a row break (`flex-basis: 100%`) so the
+   panel-level scope reads as a heading-row rather than a column among the
+   x/y/hue/size pickers, and the axes don't collapse onto the same line at
+   wide panel widths. Hue / size / weight stay free to wrap naturally. */
 .dynamic-picker-group {
   display: inline-flex;
   align-items: center;
   gap: 3px;
 }
+.dynamic-picker-group.scope,
+.dynamic-picker-group.axis {
+  flex-basis: 100%;
+}
 
-/* Per-axis scope select. Compact pill-shaped dropdown; quietly default to
-   "both" (no visual emphasis) and switch to an accent ring when the user
-   restricts to pre / post so it's obvious a row filter is active. */
+/* Panel-level direction-scope select. Compact dropdown that quietly
+   defaults to "both" (no visual emphasis) and gains an accent ring under
+   `input` / `output` / `reciprocal` so the user can scan the panel and
+   see at a glance that a row filter is active. Mixed-case labels match
+   the partners-pane tab text — uppercasing them via CSS would read as
+   shouting given the longer "Reciprocal" word. */
 .dynamic-scope {
-  font-size: 10px;
-  padding: 1px 3px;
+  font-size: 11px;
+  padding: 2px 4px;
   border: 1px solid var(--line);
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   background: var(--bg);
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 .dynamic-scope.active {
   color: var(--accent-strong);

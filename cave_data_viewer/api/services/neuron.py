@@ -1,15 +1,17 @@
-import time
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from flask import current_app
 
-from ..caches import cache_key_with_config, query_cache, soma_summary_cache
+from ..caches import cache_key_with_config
 from .keys import canonical_query_hash, is_live
 from .query_runner import run_query
 from .request_state import current_timestamp
-from .timing import timer
+import time as _time
+
+from .timing import record_stage, timer
 
 
 DEFAULT_DESIRED_RESOLUTION = [1, 1, 1]
@@ -56,56 +58,91 @@ class NeuronQuery:
         # materialized mode (queries are implicitly consistent via
         # version number) and outside a request context (warmup, tests).
         self.timestamp_for_consistency = current_timestamp() if is_live(mat_version) else None
+        # Per-NQ memoization for `soma_summary()`. The method is called
+        # multiple times per request (root soma for spatial features,
+        # summary payload, plot endpoints) — caching on the instance
+        # avoids re-deriving from the bulk num_soma cache on each call.
+        # Fresh per request because NQ is request-scoped; cross-request
+        # memoization rides on the bulk num_soma decoration cache.
+        self._soma_summary_memo: dict | None = None
         # Legacy field — `df.attrs["timestamp"]` from the synapse query
         # that CAVE echoes back. Kept for backwards-compat in callers
         # that still read `timestamp_used`, but `timestamp_for_consistency`
         # is now the source of truth surfaced on the response payload.
         self.timestamp_used = None
 
-    def _cache_key(self, kind: str, **extra: Any) -> str | None:
+    def _cache_key(self, kind: str, **extra: Any) -> tuple | None:
+        """Build the synapse-cache key.
+
+        Live mode returns None so the cache is bypassed entirely. For
+        materialized mode, returns a 3-tuple `(cache_ds, mat_version,
+        canonical_hash)`. The leading `(ds, mv)` lets the LayeredSwrCache
+        retention resolver pick the right L2 partition (default vs
+        longlived) without re-deriving them from a hashed payload.
+        Every knob that affects the returned dataframe shape stays
+        inside `canonical_hash`: synapse_columns drives the projection,
+        position_prefix drives the split-position column names,
+        desired_resolution drives the unit of the position values.
+        Forgetting any one of these silently serves a previous-request
+        shape from cache.
+
+        `cache_datastack` resolves any per-datastack alias (e.g.
+        `minnie65_public` → `minnie65_phase3_v1`) so two datastacks
+        backed by the same underlying data share one cache entry. The
+        actual CAVE call still uses `self.datastack`; only the key
+        changes.
+        """
         if is_live(self.mat_version):
             return None
-        # Every knob that affects the returned dataframe shape goes in the
-        # key — synapse_columns drives the projection, position_prefix
-        # drives the split-position column names, desired_resolution drives
-        # the unit of the position values. Forgetting any one of these
-        # silently serves a previous-request shape from cache.
-        #
-        # `cache_datastack` resolves any per-datastack alias (e.g.
-        # `minnie65_public` → `minnie65_phase3_v1`) so two datastacks
-        # backed by the same underlying data share one cache entry. The
-        # actual CAVE call still uses `self.datastack`; only the key
-        # changes.
         from .cache_lifecycle import cache_datastack
-        payload = {"kind": kind, "ds": cache_datastack(self.datastack), "mv": self.mat_version,
+        cache_ds = cache_datastack(self.datastack)
+        payload = {"kind": kind, "ds": cache_ds, "mv": self.mat_version,
                    "syn": self.synapse_table, "rid": self.root_id,
                    "cols": tuple(self.synapse_columns) if self.synapse_columns else None,
                    "pos_prefix": self.synapse_position_prefix,
                    "desired_res": tuple(self.desired_resolution),
                    **extra}
-        return canonical_query_hash(payload)
+        return (cache_ds, self.mat_version, canonical_query_hash(payload))
 
-    def _synapse_df(self, direction: str) -> pd.DataFrame:
+    def _synapse_df(self, direction: str, *, stages: dict | None = None) -> pd.DataFrame:
+        """Fetch (or read from cache) the per-direction synapse df.
+
+        `stages` is the optional explicit stage dict for cross-thread use.
+        When `_synapse_df` runs inside a `ThreadPoolExecutor` worker (the
+        synapse-pre/post parallelization in `connectivity_bundle`),
+        `flask.g.timing_stages` isn't shared across threads — Flask's
+        `copy_current_request_context` gives each worker its own `g`,
+        so writes to it never reach the request log. Caller passes the
+        captured request-thread dict here; `timer()` writes into it
+        directly. Same pattern `lookup_decorations` uses for its cold-
+        fetch pool.
+
+        No `synapse_query[direction]` timer wraps the CAVE call here —
+        the orchestrator (`connectivity_bundle`) wraps the entire
+        parallel post+pre block in a single `synapse_query` timer
+        instead. Per-direction timers would double-count under
+        parallelization (sum of two parallel calls > wall time), which
+        broke `cave_ms` / `processing_ms` rollup math.
+        """
         if self.synapse_table is None:
             raise ValueError("synapse_table is not configured for this datastack")
         key = self._cache_key("synapses", direction=direction)
-        if key and key in query_cache:
-            # Cache hits are timed separately so the difference between a
-            # warm and cold neuron is visible in the per-request log line.
-            with timer(f"synapse_cache_hit[{direction}]"):
-                return query_cache[key]
-        # L2 (GCS) check, materialized mode only — `_cache_key` returns None
-        # for live mode, so live requests skip the L2 layer entirely. The
-        # L2 hit promotes into L1 so subsequent requests on this pod are
-        # fast L1 reads. Falls through to a CAVE fetch on miss / outage.
-        # Resolve retention class once: synapse keys are SHA-1 hashes,
-        # so the LayeredSwrCache resolver pattern doesn't apply — pick
-        # the right partition explicitly here and thread to read/write.
-        retention = self._retention_class()
-        if key:
-            df = self._try_synapse_l2(key, direction, retention)
-            if df is not None:
-                return df
+        cache = current_app.extensions.get("dcv_synapse_cache") if key else None
+        if cache is not None:
+            # Time the lookup *around* `get_with_layer` (not inside) so the
+            # GCS round-trip on an L2 promotion is captured rather than
+            # bleeding into the surrounding `synapse_query` outer timer.
+            # The pre-fix version wrapped only the post-hit return, which
+            # always logged 0ms and hid hundreds of ms of cold-pod L2 work.
+            t0 = _time.perf_counter()
+            hit_layer = cache.get_with_layer(key)
+            elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+            if hit_layer is not None:
+                value, _freshness, layer = hit_layer
+                record_stage(
+                    f"synapse_{layer}_hit[{direction}]", elapsed_ms, stages=stages,
+                )
+                return value
         partner_col = "pre_pt_root_id" if direction == "post" else "post_pt_root_id"
         own_col = "post_pt_root_id" if direction == "post" else "pre_pt_root_id"
         qf = self.client.materialize.tables[self.synapse_table](**{own_col: self.root_id})
@@ -115,91 +152,28 @@ class NeuronQuery:
         }
         if self.synapse_columns is not None:
             query_kwargs["select_columns"] = self.synapse_columns
-        with timer(f"synapse_query[{direction}]"):
-            df = run_query(
-                qf,
-                live=is_live(self.mat_version),
-                timestamp=self.timestamp_for_consistency,
-                **query_kwargs,
-            )
+        df = run_query(
+            qf,
+            live=is_live(self.mat_version),
+            timestamp=self.timestamp_for_consistency,
+            **query_kwargs,
+        )
         df = df[df[partner_col] != 0].copy()
         df = df[df[partner_col] != self.root_id].copy()  # drop autapses
         if df.attrs.get("timestamp"):
             self.timestamp_used = str(df.attrs["timestamp"])
-        if key:
-            query_cache[key] = df
-            self._publish_synapse_l2(key, df, retention)
+        if cache is not None:
+            cache.set(key, df)
         return df
 
-    def _retention_class(self) -> str:
-        """Resolve which L2 partition (`default` / `longlived`) this
-        request's writes should land on. Live mode never reaches the L2
-        layer (`_cache_key` returns None first), but we still default to
-        `default` defensively for any unexpected path."""
-        from flask import current_app
-        from .cache_lifecycle import retention_class_for
-        registry = current_app.extensions.get("dcv_longlived_registry")
-        if registry is None:
-            return "default"
-        return retention_class_for(registry, self.datastack, self.mat_version)
-
-    @staticmethod
-    def _try_synapse_l2(key: str, direction: str, retention: str) -> pd.DataFrame | None:
-        """L2 read for the synapse df. Returns the df (and populates L1)
-        on a within-TTL hit; None on miss, expired entry, missing config,
-        or any GCS error. The TTL gate uses `CACHE_QUERY_TTL_SECONDS`
-        (the same TTL that bounds L1) so L2 entries past their effective
-        freshness are treated as misses.
-
-        `dcv_synapse_l2` is now a `dict[str, GcsObjectStore]` keyed by
-        retention class; the caller resolves which class once per call
-        and passes it through.
-        """
-        from flask import current_app
-        l2 = current_app.extensions.get("dcv_synapse_l2")
-        if not l2:
-            return None
-        store = l2.get(retention) or l2.get("default")
-        if store is None:
-            return None
-        hit = store.get(key)
-        if hit is None:
-            return None
-        value, fetched_at = hit
-        ttl = current_app.config["CACHE_QUERY_TTL_SECONDS"]
-        if time.time() - fetched_at > ttl:
-            return None
-        with timer(f"synapse_l2_hit[{direction}]"):
-            query_cache[key] = value
-            return value
-
-    @staticmethod
-    def _publish_synapse_l2(key: str, df: pd.DataFrame, retention: str) -> None:
-        """Fire-and-forget L2 write. The dedicated `dcv_l2_writer`
-        ThreadPoolExecutor doesn't share with `RevalidationExecutor` —
-        synapse writes are idempotent (the CAVE result is immutable for
-        a given materialized key), need no app context, and don't
-        benefit from per-key dedup.
-
-        Default-arg-capture every variable the closure references — the
-        same late-binding rule the decoration revalidation closures
-        follow.
-        """
-        from flask import current_app
-        l2 = current_app.extensions.get("dcv_synapse_l2")
-        executor = current_app.extensions.get("dcv_l2_writer")
-        if not l2 or executor is None:
-            return
-        store = l2.get(retention) or l2.get("default")
-        if store is None:
-            return
-        ts = time.time()
-
-        def _write(_store=store, _key=key, _df=df, _ts=ts):
-            _store.set(_key, _df, _ts)
-        executor.submit(_write)
-
-    def _aggregate(self, syn_df: pd.DataFrame, partner_col: str, *, timer_label: str | None = None) -> pd.DataFrame:
+    def _aggregate(
+        self,
+        syn_df: pd.DataFrame,
+        partner_col: str,
+        *,
+        timer_label: str | None = None,
+        stages: dict | None = None,
+    ) -> pd.DataFrame:
         if syn_df.empty:
             return pd.DataFrame(columns=["root_id", "num_syn"])
         # Timer wraps just the groupby + per-rule aggregation work, NOT
@@ -208,7 +182,7 @@ class NeuronQuery:
         # `timer_label` to tag per-direction cost cleanly without the
         # implicit-overlap problem the earlier wrap had.
         if timer_label is not None:
-            with timer(timer_label):
+            with timer(timer_label, stages=stages):
                 return self._aggregate_inner(syn_df, partner_col)
         return self._aggregate_inner(syn_df, partner_col)
 
@@ -220,37 +194,74 @@ class NeuronQuery:
         out = out.reset_index().rename(columns={partner_col: "root_id"})
         return out.sort_values("num_syn", ascending=False).reset_index(drop=True)
 
-    def partners_out(self) -> pd.DataFrame:
-        return self._aggregate(self._synapse_df("pre"), "post_pt_root_id", timer_label="aggregate_partners[out]")
+    def partners_out(self, *, stages: dict | None = None) -> pd.DataFrame:
+        return self._aggregate(
+            self._synapse_df("pre", stages=stages),
+            "post_pt_root_id",
+            timer_label="aggregate_partners[out]",
+            stages=stages,
+        )
 
-    def partners_in(self) -> pd.DataFrame:
-        return self._aggregate(self._synapse_df("post"), "pre_pt_root_id", timer_label="aggregate_partners[in]")
+    def partners_in(self, *, stages: dict | None = None) -> pd.DataFrame:
+        return self._aggregate(
+            self._synapse_df("post", stages=stages),
+            "pre_pt_root_id",
+            timer_label="aggregate_partners[in]",
+            stages=stages,
+        )
 
     def soma_summary(self) -> dict:
-        # Cross-request cache keyed on the invariants — (datastack,
-        # mat_version, root_id, soma_table) plus a hash of the response-
-        # shaping config (desired_resolution drives position units;
-        # soma_root_id_column drives the lookup column). Live mode keeps
-        # `mat_version` in the key as the literal string "live" so the
-        # cache short-circuits naturally without a separate live-mode
-        # branch. Saves ~200-300ms per warm plot request (the single-row
-        # soma fetch otherwise re-fires on every fresh NeuronQuery instance).
-        from .cache_lifecycle import cache_datastack
-        cache_key = cache_key_with_config(
-            cache_datastack(self.datastack), self.mat_version, self.root_id, self.soma_table,
-            config_bundle={
-                "desired_resolution": list(self.desired_resolution),
-                "soma_root_id_column": self.soma_root_id_column,
-            },
-        )
-        cached = soma_summary_cache.get(cache_key)
-        if cached is not None:
-            with timer("soma_cache_hit"):
-                return cached
+        """Return `{num_soma, soma_pt_position}` for the queried cell.
+
+        Cache hierarchy:
+          1. Per-NQ memo (within-request): same NQ instance is asked
+             multiple times per connectivity bundle (root soma for
+             spatial features, summary payload, plot endpoints).
+          2. Bulk `num_soma` decoration cache (cross-request): a single
+             dict keyed by `(ds, mv, soma_table)` holds every root id's
+             soma row. Loaded by `lookup_decorations` for any
+             connectivity request, warmed via decoration warmup, and
+             survives pod restart via the L2 (GCS) layer.
+          3. Per-cell CAVE fallback: only when the bulk cache hasn't
+             been populated (e.g. a path that calls `soma_summary`
+             without invoking `lookup_decorations` first, or a cold
+             pod hitting the soma_summary side of a plot endpoint
+             before any other request).
+
+        The bulk cache holds `{root_id: {num_soma, cell_id?, pt_position?}}`,
+        with `pt_position` set only on single-soma rows (multi-soma
+        cells get `num_soma` only — there's no unambiguous position
+        for them). This translates `pt_position` → `soma_pt_position`
+        for the SPA-facing shape.
+        """
+        if self._soma_summary_memo is not None:
+            return self._soma_summary_memo
+        result = self._compute_soma_summary()
+        self._soma_summary_memo = result
+        return result
+
+    def _compute_soma_summary(self) -> dict:
         if self.soma_table is None:
-            result = {"num_soma": 0, "soma_pt_position": None}
-            soma_summary_cache[cache_key] = result
-            return result
+            return {"num_soma": 0, "soma_pt_position": None}
+        # Try the bulk num_soma decoration cache first. Hits the same
+        # cache that `lookup_decorations` populates, so within a
+        # connectivity request this is always a free dict lookup —
+        # `lookup_decorations` runs ~17 lines before `soma_summary` in
+        # `connectivity_bundle`, leaving the bulk dict L1-warm.
+        # `_lookup_bulk_num_soma` records the underlying cache lookup
+        # latency itself (`soma_l1_hit` / `soma_l2_hit`); this branch is
+        # pure dict-lookup work afterwards, no timer needed.
+        bulk_row = self._lookup_bulk_num_soma()
+        if bulk_row is not None:
+            if bulk_row == "absent":
+                # Cache hit but the queried root has no row in the
+                # soma table — definitive "no soma" answer.
+                return {"num_soma": 0, "soma_pt_position": None}
+            return {
+                "num_soma": int(bulk_row.get("num_soma", 0)),
+                "soma_pt_position": bulk_row.get("pt_position"),
+            }
+        # Bulk cache cold — fall back to a per-cell CAVE fetch.
         try:
             qf = self.client.materialize.tables[self.soma_table](
                 **{self.soma_root_id_column: self.root_id}
@@ -264,13 +275,12 @@ class NeuronQuery:
                     desired_resolution=self.desired_resolution,
                 )
         except Exception:
-            # Don't cache failures — transient CAVE errors shouldn't
-            # poison a 30-min cache window. The next request retries.
+            # Transient CAVE errors don't get memoized — caller can
+            # retry on the next request. (The per-NQ memo still caches
+            # within this request to avoid hammering CAVE on retry.)
             return {"num_soma": 0, "soma_pt_position": None}
         if df.empty:
-            result = {"num_soma": 0, "soma_pt_position": None}
-            soma_summary_cache[cache_key] = result
-            return result
+            return {"num_soma": 0, "soma_pt_position": None}
         pt_col = next((c for c in df.columns if c.endswith("pt_position")), None)
         soma_pt = None
         if pt_col is not None:
@@ -278,9 +288,45 @@ class NeuronQuery:
             if hasattr(value, "tolist"):
                 value = value.tolist()
             soma_pt = list(value) if value is not None else None
-        result = {"num_soma": int(len(df)), "soma_pt_position": soma_pt}
-        soma_summary_cache[cache_key] = result
-        return result
+        return {"num_soma": int(len(df)), "soma_pt_position": soma_pt}
+
+    def _lookup_bulk_num_soma(self):
+        """Read this cell's row from the bulk num_soma decoration cache.
+
+        Returns:
+          - the row dict (e.g. `{"num_soma": 1, "cell_id": "...", "pt_position": [...]}`)
+            on a cache hit where the cell is in the soma table;
+          - the string ``"absent"`` on a cache hit where the cell is NOT
+            in the soma table (definitive "no soma" answer);
+          - None when the bulk cache isn't populated (caller falls
+            through to a per-cell CAVE fetch).
+
+        Sentinel `"absent"` distinguishes "cache had it; said no" from
+        "cache cold; ask CAVE." Without it, both cases return None and
+        the caller can't tell whether to do a CAVE fetch.
+        """
+        from .cache_lifecycle import cache_datastack
+        from .decoration import get_decoration_service
+        try:
+            bulk_cache = get_decoration_service().cache_for(
+                "num_soma", live=is_live(self.mat_version)
+            )
+        except Exception:
+            return None
+        bulk_key = (cache_datastack(self.datastack), self.mat_version, self.soma_table)
+        # Wall-time the lookup so an L2 GCS read is visible per-request
+        # under `soma_l2_hit` rather than disappearing into framework
+        # overhead. L1 hits typically log <1ms; L2 hits log the GCS
+        # round-trip + unpickle cost.
+        t0 = _time.perf_counter()
+        hit_layer = bulk_cache.get_with_layer(bulk_key)
+        elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+        if hit_layer is None:
+            return None
+        bulk_dict, _freshness, layer = hit_layer
+        record_stage(f"soma_{layer}_hit", elapsed_ms)
+        row = bulk_dict.get(int(self.root_id))
+        return row if row is not None else "absent"
 
 
 import logging as _logging
@@ -480,8 +526,55 @@ def connectivity_bundle(
     # `partners_in()` / `partners_out()` time their own `_aggregate` step
     # internally as `aggregate_partners[in/out]` — synapse_query[*] and
     # the groupby are tagged separately so the breakdown is additive.
-    pin = nq.partners_in() if need_in else None
-    pout = nq.partners_out() if need_out else None
+    #
+    # When both directions are needed, parallelize the two CAVE round-
+    # trips: each `_synapse_df` is a sync `requests`-backed call (the
+    # GIL releases during socket IO), so a 2-thread pool cuts cold
+    # latency from sum(post,pre) to max(post,pre) — typically a 5s win
+    # on a heavily-connected cell. `copy_current_request_context`
+    # propagates `current_app` + `flask.g` into the worker threads so
+    # the cache lookups (`current_app.extensions["dcv_synapse_cache"]`)
+    # and `timer()` calls (which write to `flask.g.stages`) work
+    # identically to the sequential path. Per-direction timer keys
+    # (e.g. `synapse_query[post]` vs `[pre]`) don't collide.
+    # Single `synapse_query` timer captures wall time of the synapse
+    # fetch — parallel or sequential. Per-direction timers would
+    # double-count under parallelization, which breaks the `cave_ms` /
+    # `processing_ms` rollup. The cache-hit path gates microseconds, so
+    # wrapping the whole branch (including cache check + potential
+    # CAVE call) is fine.
+    with timer("synapse_query"):
+        if need_in and need_out:
+            from concurrent.futures import ThreadPoolExecutor
+
+            from flask import copy_current_request_context
+
+            from .timing import current_stages
+
+            # Capture the request thread's stages dict so worker timer()
+            # calls accumulate into it directly. `copy_current_request_context`
+            # gives each worker its own `flask.g` — writes to that copy
+            # never reach the request log — so we route the timing dict
+            # explicitly via the `stages=` parameter instead of relying
+            # on `g`.
+            request_stages = current_stages()
+
+            @copy_current_request_context
+            def _do_in():
+                return nq.partners_in(stages=request_stages)
+
+            @copy_current_request_context
+            def _do_out():
+                return nq.partners_out(stages=request_stages)
+
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="cdv-syn") as pool:
+                fut_in = pool.submit(_do_in)
+                fut_out = pool.submit(_do_out)
+                pin = fut_in.result()
+                pout = fut_out.result()
+        else:
+            pin = nq.partners_in() if need_in else None
+            pout = nq.partners_out() if need_out else None
 
     decoration_lookup: dict[int, dict] = {}
     decoration_groups: list[dict] = []

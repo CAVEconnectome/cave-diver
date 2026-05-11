@@ -72,11 +72,13 @@ function bindingsToPlotBindings(b: TourPlotBindings): PlotBindings {
   if (b.hue) out.hue = b.hue;
   if (b.size) out.size = b.size;
   if (b.weight) out.weight = b.weight;
-  if (b.x_scope === "pre" || b.x_scope === "post" || b.x_scope === "both") {
-    out.x_scope = b.x_scope;
-  }
-  if (b.y_scope === "pre" || b.y_scope === "post" || b.y_scope === "both") {
-    out.y_scope = b.y_scope;
+  if (
+    b.scope === "input" ||
+    b.scope === "output" ||
+    b.scope === "both" ||
+    b.scope === "reciprocal"
+  ) {
+    out.scope = b.scope;
   }
   if (b.show_cell_depth === false) out.show_cell_depth = false;
   return out;

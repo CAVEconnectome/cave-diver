@@ -12,6 +12,7 @@ from ..services.datastack_config import (
 from ..services.neuron import NeuronQuery
 from ..services.plots import _parse_cells_param, load_plot_specs, resolve_plot
 from ..services.spatial import build_spatial_provider
+from ..services.timing import timer
 
 bp = Blueprint("plots", __name__, url_prefix="/datastacks")
 catalog_bp = Blueprint("plot_catalog", __name__)
@@ -86,38 +87,46 @@ def make_plot(ds: str, spec_name: str):
                        f"No plot spec named {spec_name!r}",
                        hint=f"available: {sorted(specs.keys())}")
 
-    try:
-        token = current_token()
-        bypass = is_dev_bypass()
-        server_address = current_app.config["GLOBAL_SERVER_ADDRESS"]
+    # Wraps CAVEclient instantiation, datastack/aligned-volume YAML
+    # resolution, the NeuronQuery setup, and the spatial-provider build.
+    # On a warm pod each piece is fast individually, but `request_client`
+    # alone has historically taken 50–200ms from auth-server discovery —
+    # without this timer that cost lands in `processing_ms` looking like
+    # in-process compute.
+    with timer("plot_endpoint_setup"):
+        try:
+            token = current_token()
+            bypass = is_dev_bypass()
+            server_address = current_app.config["GLOBAL_SERVER_ADDRESS"]
 
-        def client_factory():
-            return request_client(
-                datastack_name=ds,
-                server_address=server_address,
-                auth_token=token,
-                dev_bypass=bypass,
-                materialize_version=mat_version,
-            )
+            def client_factory():
+                return request_client(
+                    datastack_name=ds,
+                    server_address=server_address,
+                    auth_token=token,
+                    dev_bypass=bypass,
+                    materialize_version=mat_version,
+                )
 
-        client = client_factory()
-    except ValueError as exc:
-        raise ApiError(401, "no_auth_token", str(exc)) from exc
+            client = client_factory()
+        except ValueError as exc:
+            raise ApiError(401, "no_auth_token", str(exc)) from exc
 
-    cfg = load_datastack_config(ds)
-    # Spatial + synapse config from the aligned_volume; see /connectivity for
-    # the cross-datastack-sharing rationale.
-    av_cfg = aligned_volume_config_for(ds, client)
-    syn_cfg = resolve_synapse_config(av_cfg, cfg)
-    nq = NeuronQuery(
-        client,
-        root_id=int(root_id),
-        datastack=ds,
-        mat_version=mat_version,
-        synapse_aggregation_rules=syn_cfg.aggregation_rules_for_neuron_query(),
-        synapse_columns=syn_cfg.merged_columns(),
-        synapse_position_prefix=syn_cfg.position_prefix,
-    )
+        cfg = load_datastack_config(ds)
+        # Spatial + synapse config from the aligned_volume; see /connectivity
+        # for the cross-datastack-sharing rationale.
+        av_cfg = aligned_volume_config_for(ds, client)
+        syn_cfg = resolve_synapse_config(av_cfg, cfg)
+        nq = NeuronQuery(
+            client,
+            root_id=int(root_id),
+            datastack=ds,
+            mat_version=mat_version,
+            synapse_aggregation_rules=syn_cfg.aggregation_rules_for_neuron_query(),
+            synapse_columns=syn_cfg.merged_columns(),
+            synapse_position_prefix=syn_cfg.position_prefix,
+        )
+        spatial_provider = build_spatial_provider(av_cfg.spatial)
     try:
         result = resolve_plot(
             spec=spec, nq=nq,
@@ -125,7 +134,7 @@ def make_plot(ds: str, spec_name: str):
             column_override=column_override,
             bindings=bindings,
             client_factory=client_factory,
-            spatial_provider=build_spatial_provider(av_cfg.spatial),
+            spatial_provider=spatial_provider,
             cell_filters=cell_filters,
             show_cell_depth=show_cell_depth,
         )

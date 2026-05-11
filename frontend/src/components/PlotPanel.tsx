@@ -97,7 +97,7 @@ export function PlotPanel({
   // see changes, so the chart's selection state survives unrelated re-renders.
   const hasHeader = !!header;
   const enableSelect = !!onSelected;
-  const bindingsKey = bindings ? `${bindings.x ?? ""}|${bindings.y ?? ""}|${bindings.hue ?? ""}|${bindings.size ?? ""}|${bindings.x_scope ?? ""}|${bindings.y_scope ?? ""}` : "";
+  const bindingsKey = bindings ? `${bindings.x ?? ""}|${bindings.y ?? ""}|${bindings.hue ?? ""}|${bindings.size ?? ""}|${bindings.scope ?? ""}` : "";
   const layout = useMemo(() => {
     if (!themed) return null;
     return {

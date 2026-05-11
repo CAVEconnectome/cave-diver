@@ -42,31 +42,93 @@ logger = logging.getLogger("cdv.timing")
 
 
 # Stage-name prefixes that count as "CAVE round-trips" for the rollup.
-# Cache hits (e.g. `synapse_cache_hit[post]`, `soma_cache_hit`) are NOT
-# CAVE-touching even though they share a prefix word — explicit suffix
-# match keeps them out. Decoration queries are CAVE-bound but the SWR
-# cache means they often warm-hit a per-pod dict; those short-circuit
-# before any timer wraps them, so anything that does emit a
-# `decoration_query[*]` is a real round-trip.
-_CAVE_STAGE_PREFIXES = ("synapse_query", "soma_query", "decoration_query")
+# Stage labels with `_hit` in them (e.g. `synapse_l1_hit[post]`,
+# `synapse_l2_hit[post]`, `soma_l2_hit`) are cache-lookup latency, not
+# CAVE work, even though they share a prefix word — the suffix-skip
+# below filters them out. Decoration queries are CAVE-bound but the SWR
+# cache means warm-hit short-circuits before any timer wraps them, so
+# anything that does emit a `decoration_query[*]` is a real round-trip.
+_CAVE_STAGE_PREFIXES = (
+    "synapse_query",
+    "soma_query",
+    "decoration_query",
+    "datastack_info_query",
+)
+
+
+def _is_cache_lookup_stage(name: str) -> bool:
+    """`<thing>_l1_hit` / `<thing>_l2_hit` / legacy `<thing>_cache_hit` —
+    every cache-lookup stage. Centralised so `_classify_cave_ms` and
+    `_classify_l2_ms` use the same definition."""
+    return "_l1_hit" in name or "_l2_hit" in name or "cache_hit" in name
+
+
+def _stage_total(value) -> float:
+    """Stage values are either a scalar (single call) or a list (repeated
+    calls of the same name accumulated). Reduce to a single sum either
+    way so the rollup is uniform."""
+    if isinstance(value, list):
+        return sum(value)
+    return float(value)
 
 
 def _classify_cave_ms(stages: dict) -> float:
     """Sum every stage value matching a CAVE-query prefix into a single
-    rollup. Stages may be scalars (single call) or lists (multiple calls
-    of the same name accumulated)."""
+    rollup. Cache-lookup stages share the prefix word but aren't CAVE
+    work; they're skipped via `_is_cache_lookup_stage`."""
     total = 0.0
     for name, value in stages.items():
         if not name.startswith(_CAVE_STAGE_PREFIXES):
             continue
-        # Skip cache-hit variants which share the prefix word.
-        if "cache_hit" in name:
+        if _is_cache_lookup_stage(name):
             continue
-        if isinstance(value, list):
-            total += sum(value)
-        else:
-            total += float(value)
+        total += _stage_total(value)
     return round(total, 2)
+
+
+def _classify_cache_l2_ms(stages: dict) -> float:
+    """Sum every stage value tagged `*_l2_hit*` — wall-time spent on
+    GCS L2 cache reads (including the unpickle / promote-to-L1 path).
+    Surfaced as its own rollup so a slow request that's actually waiting
+    on cold-pod L2 promotion doesn't get misread as CAVE-bound.
+
+    Under parallelism this can exceed `total_ms` (sum of two parallel
+    GCS reads > wall time) — same caveat that already applies to the
+    per-direction CAVE timers under parallel synapse fetches.
+    """
+    total = 0.0
+    for name, value in stages.items():
+        if "_l2_hit" not in name:
+            continue
+        total += _stage_total(value)
+    return round(total, 2)
+
+
+def record_stage(label: str, elapsed_ms: float, *, stages: dict | None = None) -> None:
+    """Record a pre-measured timing under `label`. Same accumulation
+    rules as `timer` (repeated labels stack into a list).
+
+    Use this when the work to time is a single function call whose
+    return value drives the label choice — e.g. `cache.get_with_layer`
+    where the resulting `layer` decides between `synapse_l1_hit` and
+    `synapse_l2_hit`. With a `with timer(...)` block, the label is
+    fixed before the work runs, so a layer-aware label can't be
+    expressed cleanly that way.
+    """
+    target = stages
+    if target is None:
+        try:
+            target = g.setdefault("timing_stages", {})
+        except RuntimeError:
+            return
+    rounded = round(elapsed_ms, 2)
+    existing = target.get(label)
+    if existing is None:
+        target[label] = rounded
+    elif isinstance(existing, list):
+        existing.append(rounded)
+    else:
+        target[label] = [existing, rounded]
 
 
 @contextmanager
@@ -167,15 +229,23 @@ def init_timing(app) -> None:
             return response
         total_ms = round((time.perf_counter() - started) * 1000, 2)
         stages = g.pop("timing_stages", {})
-        # CAVE-vs-other rollup. `cave_ms` sums every stage tagged as a
-        # CAVE round-trip (synapse / soma / decoration), excluding cache
-        # hits. `processing_ms` is the residual — wall time spent on
-        # everything else (in-process aggregation, plot building, JSON
-        # serialization, network, framework overhead). Together they
-        # answer "is this slow request CAVE-bound or CPU-bound?" without
-        # needing to scan every stage.
+        # Latency rollup splits total_ms into three buckets so the top of
+        # the log line answers "where did this request spend its time?"
+        # without grepping through stages:
+        #   - `cave_ms`     : real CAVE round-trips (synapse / soma /
+        #                     decoration_query), excluding cache lookups.
+        #   - `cache_l2_ms` : wall-time on GCS L2 reads (cold-pod warmup,
+        #                     mostly). Distinct from CAVE; visible
+        #                     separately so a slow request from a cold
+        #                     pod doesn't get misread as CAVE-bound.
+        #   - `processing_ms`: residual — in-process aggregation, plot
+        #                     building, JSON serialization, framework.
+        # Under parallelism (e.g. parallel pre+post synapse fetches) the
+        # per-direction sums can exceed wall time of that block, so the
+        # buckets aren't strictly additive — `processing_ms` floors at 0.
         cave_ms = _classify_cave_ms(stages)
-        processing_ms = round(max(total_ms - cave_ms, 0), 2)
+        cache_l2_ms = _classify_cache_l2_ms(stages)
+        processing_ms = round(max(total_ms - cave_ms - cache_l2_ms, 0), 2)
         # Single JSON payload — easy to grep, easy to parse for charting
         # later. Path includes the query string-less URL; methods + status
         # round out the surface.
@@ -185,6 +255,7 @@ def init_timing(app) -> None:
             "status": response.status_code,
             "total_ms": total_ms,
             "cave_ms": cave_ms,
+            "cache_l2_ms": cache_l2_ms,
             "processing_ms": processing_ms,
             "stages": stages,
         }

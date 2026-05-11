@@ -308,8 +308,11 @@ export interface PlotBindings {
   size?: string | null;
   /** Numeric column to sum on bar plots; replaces implicit row-count. */
   weight?: string | null;
-  x_scope?: "pre" | "post" | "both" | null;
-  y_scope?: "pre" | "post" | "both" | null;
+  /** Panel-level direction scope on the unified `partners_both` frame.
+   *  Applied to every channel uniformly (replaces the legacy per-axis
+   *  x_scope / y_scope pair). `reciprocal` = strict intersection; `both`
+   *  = no filter (use `hue=direction` to color by direction class). */
+  scope?: "input" | "output" | "both" | "reciprocal" | null;
   /** Draw the target neuron's soma depth on depth-axis plots. Default ON
    *  on the backend; the SPA only sets this when the user toggled it off. */
   show_cell_depth?: boolean | null;
@@ -349,7 +352,7 @@ function bindingsCacheKey(b: PlotBindings | null | undefined): string {
   // `show_cell_depth` only contributes when explicitly off — the backend
   // default is ON, so undefined and true produce the same fetch key.
   const scd = b.show_cell_depth === false ? "0" : "";
-  return `${b.x ?? ""}|${b.y ?? ""}|${b.hue ?? ""}|${b.size ?? ""}|${b.weight ?? ""}|${b.x_scope ?? ""}|${b.y_scope ?? ""}|${scd}`;
+  return `${b.x ?? ""}|${b.y ?? ""}|${b.hue ?? ""}|${b.size ?? ""}|${b.weight ?? ""}|${b.scope ?? ""}|${scd}`;
 }
 
 function hasAnyBinding(b: PlotBindings | null | undefined): boolean {

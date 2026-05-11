@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 from ..auth import auth_required, current_token, is_dev_bypass
 from ..cave import request_client
 from ..errors import ApiError
-from ..services.datastack_config import latest_valid_mat_version
+from ..services.datastack_config import cached_datastack_info, latest_valid_mat_version
 from ..services.keys import is_live
 from ..services.tables import TableQuery, parse_filters
 
@@ -152,16 +152,20 @@ def rows(ds: str, table: str):
 
     # Pull positions in the datastack's viewer_resolution so a row's
     # `*_pt_position_x/y/z` triple drops straight into a Neuroglancer URL
-    # without any nm conversion. `viewer_resolution()` is cached
-    # client-side after first call (use_stored=True default), so this is
-    # essentially free on warm requests; on first request for a datastack
-    # it costs one info-service round-trip. Failures fall back to the
-    # table's native resolution — better to serve rows in surprising units
-    # than to refuse the page.
-    try:
-        viewer_resolution = client.info.viewer_resolution()
-        desired_resolution = [float(v) for v in viewer_resolution]
-    except Exception:
+    # without any nm conversion. Reads from the long-TTL
+    # `dcv_datastack_info_cache` (24h) so warm pods skip the info-service
+    # round-trip entirely. The viewer-resolution components are stable
+    # properties of the datastack, so caching with the rest of
+    # datastack-info is correct. Failures fall back to the table's
+    # native resolution — better to serve rows in surprising units than
+    # to refuse the page.
+    info_dict = cached_datastack_info(ds, client) or {}
+    rx = info_dict.get("viewer_resolution_x")
+    ry = info_dict.get("viewer_resolution_y")
+    rz = info_dict.get("viewer_resolution_z")
+    if rx is not None and ry is not None and rz is not None:
+        desired_resolution = [float(rx), float(ry), float(rz)]
+    else:
         desired_resolution = None
 
     try:

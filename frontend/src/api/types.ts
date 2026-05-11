@@ -264,8 +264,7 @@ export interface TourPlotBindings {
   hue?: string | null;
   size?: string | null;
   weight?: string | null;
-  x_scope?: string | null;
-  y_scope?: string | null;
+  scope?: string | null;
   show_cell_depth?: boolean | null;
 }
 

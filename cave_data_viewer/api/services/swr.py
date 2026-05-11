@@ -5,8 +5,6 @@ from typing import Any
 
 from cachetools import LRUCache
 
-from ..caches import CacheSerializer, _DEFAULT_SERIALIZER
-
 
 logger = logging.getLogger("cdv.cache")
 
@@ -18,10 +16,9 @@ class SwrCache:
     `None` if absent or past hard TTL. Stale hits are the caller's signal to
     queue a background revalidation; the cached value is still served immediately.
 
-    Like `_LazyTTLCache`, accepts an optional `CacheSerializer`. The default
-    is the process-wide one (identity unless `CDV_CACHE_SERIALIZE=pickle`),
-    so the SWR cache is also ready to swap to Redis without touching call
-    sites — same two-piece migration as the TTL caches.
+    L1-only — values are stored as live Python objects, no serialization
+    overhead. The L2 layer (when present, via `LayeredSwrCache`) does its
+    own pickle round-trip in `GcsObjectStore`.
     """
 
     def __init__(
@@ -30,47 +27,48 @@ class SwrCache:
         soft_ttl: float,
         hard_ttl: float,
         maxsize: int = 1024,
-        serializer: CacheSerializer | None = None,
+        immutable: bool = False,
     ):
         self._cache: LRUCache = LRUCache(maxsize=maxsize)
         self._lock = threading.Lock()
         self.soft_ttl = soft_ttl
         self.hard_ttl = hard_ttl
-        self.serializer: CacheSerializer = serializer or _DEFAULT_SERIALIZER
-
-    def _safe_loads(self, key: Any, stored_value: Any) -> tuple[bool, Any]:
-        """Try to deserialize. Returns `(ok, value)` — on failure, evicts
-        the poisoned entry and logs. Used by both read paths so a
-        deploy-compat break (pickle protocol shift, class moved, major
-        version bump on a deserialized lib) degrades to a cache miss
-        rather than 500-ing every request.
-        """
-        try:
-            return True, self.serializer.loads(stored_value)
-        except Exception as exc:
-            with self._lock:
-                self._cache.pop(key, None)
-            logger.warning(
-                "swr_deserialize_failed key=%r serializer=%s error=%s: %s",
-                key, type(self.serializer).__name__, type(exc).__name__, exc,
-            )
-            return False, None
+        # Immutable mode: data is keyed by an invariant identifier (e.g.
+        # mat_version) and is bit-identical across time. Skip soft/hard
+        # TTL gating on read — every hit is "fresh" by construction. Used
+        # for materialized synapse dataframes and per-cell soma summaries.
+        # `soft_ttl` / `hard_ttl` are still required by the constructor
+        # (kept for API uniformity) but never consulted in this mode;
+        # callers may pass any value (e.g. 0).
+        self.immutable = immutable
 
     def get(self, key: Any) -> tuple[Any, str] | None:
         with self._lock:
             entry = self._cache.get(key)
         if entry is None:
             return None
-        stored_value, fetched_at = entry
+        value, fetched_at = entry
+        if self.immutable:
+            return value, "fresh"
         age = time.time() - fetched_at
         if age > self.hard_ttl:
             with self._lock:
                 self._cache.pop(key, None)
             return None
-        ok, value = self._safe_loads(key, stored_value)
-        if not ok:
-            return None
         return value, ("fresh" if age <= self.soft_ttl else "stale")
+
+    def get_with_layer(self, key: Any) -> tuple[Any, str, str] | None:
+        """Like `get`, but returns `(value, freshness, layer)` so a caller
+        timing the lookup can attribute the latency. `layer` is always
+        `"l1"` here — the SwrCache itself has no L2; the field exists so
+        consumers don't have to type-narrow between SwrCache and
+        LayeredSwrCache (which overrides this and may return `"l2"`).
+        """
+        result = self.get(key)
+        if result is None:
+            return None
+        value, freshness = result
+        return value, freshness, "l1"
 
     def get_with_meta(self, key: Any) -> tuple[Any, float] | None:
         """Like `get`, but exposes the absolute `fetched_at` timestamp.
@@ -82,15 +80,13 @@ class SwrCache:
             entry = self._cache.get(key)
         if entry is None:
             return None
-        stored_value, fetched_at = entry
-        age = time.time() - fetched_at
-        if age > self.hard_ttl:
-            with self._lock:
-                self._cache.pop(key, None)
-            return None
-        ok, value = self._safe_loads(key, stored_value)
-        if not ok:
-            return None
+        value, fetched_at = entry
+        if not self.immutable:
+            age = time.time() - fetched_at
+            if age > self.hard_ttl:
+                with self._lock:
+                    self._cache.pop(key, None)
+                return None
         return value, fetched_at
 
     def get_full(self, key: Any) -> tuple[Any, str, float] | None:
@@ -105,21 +101,19 @@ class SwrCache:
             entry = self._cache.get(key)
         if entry is None:
             return None
-        stored_value, fetched_at = entry
+        value, fetched_at = entry
+        if self.immutable:
+            return value, "fresh", fetched_at
         age = time.time() - fetched_at
         if age > self.hard_ttl:
             with self._lock:
                 self._cache.pop(key, None)
             return None
-        ok, value = self._safe_loads(key, stored_value)
-        if not ok:
-            return None
         return value, ("fresh" if age <= self.soft_ttl else "stale"), fetched_at
 
     def set(self, key: Any, value: Any) -> None:
-        stored = self.serializer.dumps(value)
         with self._lock:
-            self._cache[key] = (stored, time.time())
+            self._cache[key] = (value, time.time())
 
     def set_with_timestamp(self, key: Any, value: Any, fetched_at: float) -> None:
         """Set with an explicit `fetched_at`. Used by `LayeredSwrCache` to
@@ -127,9 +121,8 @@ class SwrCache:
         L2 snapshot must appear 3-hours-old on the new pod (potentially
         stale → schedules revalidation), not freshly minted.
         """
-        stored = self.serializer.dumps(value)
         with self._lock:
-            self._cache[key] = (stored, fetched_at)
+            self._cache[key] = (value, fetched_at)
 
     def __contains__(self, key: Any) -> bool:
         return self.get(key) is not None
@@ -176,18 +169,26 @@ class LayeredSwrCache:
         soft_ttl: float,
         hard_ttl: float,
         maxsize: int = 1024,
-        serializer: CacheSerializer | None = None,
         l2=None,
         executor=None,
         retention_resolver=None,
+        immutable: bool = False,
     ):
         self._l1 = SwrCache(
             soft_ttl=soft_ttl,
             hard_ttl=hard_ttl,
             maxsize=maxsize,
-            serializer=serializer,
+            immutable=immutable,
         )
         self._l2 = l2
+        # `executor` must implement `submit(fn) -> Future` (e.g. a plain
+        # `concurrent.futures.ThreadPoolExecutor`). L2 writes are
+        # idempotent and need no app context — the original design's
+        # use of `RevalidationExecutor` (with per-key dedup + Flask
+        # context) was overhead for the L2-write path. Decoration
+        # *revalidation* closures keep using `RevalidationExecutor`
+        # directly via `DecorationService.executor`; only L2 writes
+        # are routed through this simpler executor.
         self._executor = executor
         # When L2 is a dict-of-stores, the resolver is required to pick
         # which inner store to read from / write to. When L2 is a bare
@@ -195,6 +196,7 @@ class LayeredSwrCache:
         self._retention_resolver = retention_resolver
         self.soft_ttl = soft_ttl
         self.hard_ttl = hard_ttl
+        self.immutable = immutable
 
     def _resolve_l2_store(self, key: Any):
         """Return the active L2 store for `key`, or None if no L2 is
@@ -243,7 +245,12 @@ class LayeredSwrCache:
         if result is None:
             return False
         value, fetched_at = result
-        if time.time() - fetched_at > self.hard_ttl:
+        # Immutable mode: data never expires from the caller's POV — the
+        # cache key already pins immutability invariants (e.g.
+        # mat_version), so a hit is bit-identical to what the source
+        # would return today. Skip the hard_ttl gate and let bucket
+        # lifecycle be the single source of truth for L2 expiry.
+        if not self.immutable and time.time() - fetched_at > self.hard_ttl:
             return False
         self._l1.set_with_timestamp(key, value, fetched_at)
         return True
@@ -254,6 +261,28 @@ class LayeredSwrCache:
             return result
         if self._try_l2(key):
             return self._l1.get(key)
+        return None
+
+    def get_with_layer(self, key: Any) -> tuple[Any, str, str] | None:
+        """Layer-aware variant of `get`. Returns `(value, freshness, layer)`
+        where `layer` is `"l1"` for an in-memory hit and `"l2"` for a hit
+        promoted from GCS this call. None on miss.
+
+        Why callers want this: the L1 path is microseconds, the L2 path is
+        a GCS round-trip (tens to hundreds of ms). Routing the same value
+        through both indistinguishably hides where time went on a cold-pod
+        warmup. Per-request timing instrumentation reads `layer` to pick
+        between `<thing>_l1_hit` and `<thing>_l2_hit` stage labels.
+        """
+        result = self._l1.get(key)
+        if result is not None:
+            value, freshness = result
+            return value, freshness, "l1"
+        if self._try_l2(key):
+            promoted = self._l1.get(key)
+            if promoted is not None:
+                value, freshness = promoted
+                return value, freshness, "l2"
         return None
 
     def get_with_meta(self, key: Any) -> tuple[Any, float] | None:
@@ -281,12 +310,13 @@ class LayeredSwrCache:
         executor = self._executor
         if executor is not None:
             # Default-arg-capture every variable — the late-binding bug
-            # CLAUDE.md warns about applies here too. The executor key is
-            # namespaced so this dedups against itself but not against the
-            # decoration revalidation closures sharing the same executor.
+            # CLAUDE.md warns about applies here too. Plain
+            # `executor.submit(fn)` signature: L2 writes are idempotent
+            # and need no per-key dedup (writes for the same key produce
+            # bit-identical bytes since the input value is the same).
             def _write(_store=store, _key=key, _value=value, _ts=fetched_at):
                 _store.set(_key, _value, _ts)
-            executor.submit(("gcs_write", key), _write)
+            executor.submit(_write)
         else:
             store.set(key, value, fetched_at)
 

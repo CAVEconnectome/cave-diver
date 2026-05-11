@@ -17,9 +17,14 @@ from typing import Any
 
 import pandas as pd
 
-from ...caches import cache_key_with_config, spatial_features_cache
+from flask import current_app
+
+from ...caches import cache_key_with_config
 from ..cache_lifecycle import cache_datastack
-from ..timing import timer
+from ..keys import is_live
+import time as _time
+
+from ..timing import record_stage, timer
 from .protocol import SpatialProvider, SummaryPanel
 
 
@@ -60,6 +65,16 @@ def compute_spatial_features_cached(
     features for the root then carry `soma_depth`/`soma_x`/`soma_z` on
     every cache hit.
     """
+    # Live mode skips the cache: keying under literal mat_version="live"
+    # would otherwise persist transient state under one key and serve it
+    # to subsequent live requests as if fresh. Same rule as
+    # `NeuronQuery._cache_key` for the synapse df. The 1.2s recompute
+    # cost is acceptable on the live path; warm plot requests in mat
+    # mode are the wins this cache is for.
+    cache = (
+        current_app.extensions.get("dcv_spatial_features_cache")
+        if not is_live(nq.mat_version) else None
+    )
     key = cache_key_with_config(
         cache_datastack(nq.datastack), nq.mat_version, nq.root_id, nq.soma_table,
         config_bundle={
@@ -68,10 +83,18 @@ def compute_spatial_features_cached(
             "spatial_provider": provider.cache_key(),
         },
     )
-    cached = spatial_features_cache.get(key)
-    if cached is not None:
-        with timer("spatial_features_cache_hit"):
-            return cached
+    if cache is not None:
+        # Time the lookup itself so a cold-pod L2 promotion shows up under
+        # `spatial_features_l2_hit` (the unpickle cost on a heavy 5K-cell
+        # frame is non-trivial) rather than disappearing into the caller's
+        # surrounding wall-time.
+        t0 = _time.perf_counter()
+        hit_layer = cache.get_with_layer(key)
+        elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+        if hit_layer is not None:
+            value, _freshness, layer = hit_layer
+            record_stage(f"spatial_features_{layer}_hit", elapsed_ms)
+            return value
 
     if (
         root_soma_position_nm is not None
@@ -124,5 +147,6 @@ def compute_spatial_features_cached(
         per_direction_out=per_direction_out,
         summary_panels=panels,
     )
-    spatial_features_cache[key] = result
+    if cache is not None:
+        cache.set(key, result)
     return result

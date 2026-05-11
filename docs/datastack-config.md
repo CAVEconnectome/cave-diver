@@ -490,7 +490,7 @@ panels in the same `plots:` list.
 | `weight` | Numeric column to sum on bar plots (replaces implicit row count). Use when `x` is categorical. |
 | `hue` | Categorical column for color encoding. |
 | `size` | Numeric column for marker-size encoding (scatter only). |
-| `x_scope` / `y_scope` | `pre`, `post`, or `both`. Filters partners by direction on that axis. Combine `x_scope=post` + `y_scope=pre` to isolate reciprocal partners. |
+| `scope` | `input`, `output`, `both`, or `reciprocal`. Panel-level direction filter applied to every channel. `reciprocal` is the strict both-directions intersection. |
 | `show_cell_depth` | Default ON for depth-axis plots. Set to `false` to suppress the focal cell's depth marker. |
 
 #### Column naming in bindings
@@ -545,13 +545,14 @@ the same `_in` / `_out` suffix treatment automatically.
 
 **Direction-agnostic columns** are properties of the partner itself —
 the value doesn't change with synapse direction. To restrict the plot
-to inputs or outputs, set `x_scope` (or `y_scope`) to `pre` or `post`:
+to inputs or outputs, set the panel-level `scope`:
 
-| `x_scope` | Keeps rows where | Means |
+| `scope` | Keeps rows where | Means |
 | --- | --- | --- |
-| `pre` | `n_syn_in > 0` | partner is presynaptic to the focal cell — **input partners** |
-| `post` | `n_syn_out > 0` | partner is postsynaptic to the focal cell — **output partners** |
-| `both` | always | every partner regardless of direction (default; can omit) |
+| `input` | `n_syn_in > 0` | input partners (loose; includes reciprocal) |
+| `output` | `n_syn_out > 0` | output partners (loose; includes reciprocal) |
+| `reciprocal` | `n_syn_in > 0 AND n_syn_out > 0` | strict both-directions only |
+| `both` | always | every partner (default; can omit) |
 
 Direction-agnostic columns include the partner's spatial features
 (`soma_depth`, `soma_x`, `soma_z`, `radial_dist_root_soma`,
@@ -562,28 +563,27 @@ Direction-agnostic columns include the partner's spatial features
 # Histogram: soma depths of partners we receive INPUT from
 bindings:
   x: soma_depth
-  x_scope: pre
+  scope: input
 
 # Histogram: soma depths of partners we send OUTPUT to
 bindings:
   x: soma_depth
-  x_scope: post
+  scope: output
 
 # Reciprocal-partners-only scatter — partner soma depth on x, partner's
-# median output-synapse depth on y, restricted to partners with edges in
-# both directions:
+# median output-synapse depth on y, restricted to partners with edges
+# in both directions:
 bindings:
-  x: soma_depth                  # bundle, direction-agnostic → use scope
-  y: median_syn_depth_out        # bundle, direction-encoded   → no scope
-  x_scope: post                  # keep partners we project to
-  y_scope: pre                   # keep partners we receive from
-  # → intersection of post-on-x AND pre-on-y is the reciprocal set
+  x: soma_depth                  # bundle, direction-agnostic
+  y: median_syn_depth_out        # bundle, direction-encoded
+  scope: reciprocal              # both directions present per row
 ```
 
-The two-axis scope intersection is what makes the *Both* tab useful for
-reciprocal-pair analysis: combining `x_scope: post` with `y_scope: pre`
-filters to partners that appear on both sides of the synaptic exchange
-with the focal cell.
+`scope: reciprocal` is what makes the *Both* tab useful for
+reciprocal-pair analysis. Under `scope: both` the same panel can split
+direction visually instead by binding `hue: direction` — a synthetic
+column on the unified frame whose values are `in only` / `out only` /
+`reciprocal`.
 
 `summary_kind` accepts the values declared in
 `frontend/src/plots/presets.ts::SummaryKind`. Currently the only summary
@@ -671,13 +671,12 @@ examples:
           y: median_syn_depth_out                                 # bundle column: bare
           hue: "aibs_metamodel_celltypes_v661.cell_type"          # decoration column: qualified
           size: net_size_out                                      # bundle column: bare
-          x_scope: post     # x reads partner soma depth — keeps partners with outputs to me
-          y_scope: pre      # y reads partner output-syn depth — keeps partners with inputs from me
+          scope: reciprocal  # restrict to partners with edges in both directions
       - id: ct-bar-recip
         bindings:
           x: "aibs_metamodel_celltypes_v661.cell_type"
           weight: n_syn_out
-          x_scope: both     # bar measure is unfiltered
+          # scope omitted → defaults to `both` (every partner)
     # Filter the partners table to confident proofread axons only.
     cells: "proofreading_status_and_strategy.status_axon:eq:t"
     # Hide the proofreading admin columns once the filter has done its job —

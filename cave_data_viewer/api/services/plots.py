@@ -840,6 +840,30 @@ _BUILDERS = {
 }
 
 
+def _empty_figure_with_message(message: str) -> go.Figure:
+    """Placeholder figure when a bound axis has no data to render.
+
+    Why this isn't a 422: the panel is configured correctly — the user
+    picked columns, the spec resolved — there's just nothing to show
+    because this neuron happens to have no values for the bound column.
+    A red error banner is the wrong affordance for "expected absence";
+    the placeholder slots into the rail so cross-neuron comparisons stay
+    visually intact.
+    """
+    fig = go.Figure()
+    fig.add_annotation(
+        text=message,
+        xref="paper", yref="paper",
+        x=0.5, y=0.5,
+        showarrow=False,
+        font={"size": 13, "color": "#888"},
+        align="center",
+    )
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    return fig
+
+
 # --- depth-axis auto-reversal -------------------------------------------------
 
 # Match column names whose bare suffix carries `depth` as a discrete word —
@@ -1111,10 +1135,15 @@ def _apply_depth_guides(
 
 # Direction-class values written into the synthetic `direction` column on the
 # unified frame. The SPA exposes this as a hue-bind option so the user can
-# color points by which side of the connection the partner sits on.
-_DIRECTION_PRE = "presynaptic"     # n_syn_in > 0, n_syn_out == 0
-_DIRECTION_POST = "postsynaptic"   # n_syn_out > 0, n_syn_in == 0
-_DIRECTION_RECIP = "reciprocal"    # both > 0
+# color points by which side of the connection the partner sits on. Labels
+# match the panel's scope picker terminology — `in only` / `out only` are
+# the strict-single-direction buckets, `reciprocal` is the both-direction
+# bucket. With the panel scope set to `both` (no row filter), binding hue
+# to `direction` reproduces the per-axis scope distinction in color rather
+# than as a row filter.
+_DIRECTION_IN_ONLY = "in only"      # n_syn_in > 0, n_syn_out == 0
+_DIRECTION_OUT_ONLY = "out only"    # n_syn_out > 0, n_syn_in == 0
+_DIRECTION_RECIP = "reciprocal"     # both > 0
 
 
 def _direction_class(row) -> str:
@@ -1123,28 +1152,33 @@ def _direction_class(row) -> str:
     if has_in and has_out:
         return _DIRECTION_RECIP
     if has_in:
-        return _DIRECTION_PRE
-    return _DIRECTION_POST
+        return _DIRECTION_IN_ONLY
+    return _DIRECTION_OUT_ONLY
 
 
 def _apply_scope_filter(df: pd.DataFrame, scope: str) -> pd.DataFrame:
-    """Filter the unified frame by per-axis direction scope.
+    """Filter the unified frame by panel-level direction scope.
 
     `scope`:
-      - "pre"  → rows where the partner gives input  (`n_syn_in > 0`)
-      - "post" → rows where the partner receives output (`n_syn_out > 0`)
-      - "both" → no filter
+      - "input"      → rows where the partner gives input (`n_syn_in > 0`).
+                       Loose: includes reciprocal partners.
+      - "output"     → rows where the partner receives output (`n_syn_out > 0`).
+                       Loose: includes reciprocal partners.
+      - "reciprocal" → strict intersection (`n_syn_in > 0 AND n_syn_out > 0`).
+                       Equivalent to the legacy `x_scope=post + y_scope=pre`
+                       composition, but explicit.
+      - "both"       → no filter (the canonical population — every partner).
 
-    The "loose" semantics include reciprocal partners in both pre and post
-    scopes — usually what the user wants ("show all input partners",
-    not "show only input-only partners"). Strict-direction analysis is
-    expressed by combining x_scope=post + y_scope=pre, which intersects
-    to reciprocal partners only.
+    The reason "both" and "reciprocal" are distinct: with `direction` bound
+    to hue, "both" gives the population view colored by direction class;
+    "reciprocal" zooms in on the reciprocal subset alone.
     """
-    if scope == "pre":
+    if scope == "input":
         return df[df["n_syn_in"].fillna(0) > 0]
-    if scope == "post":
+    if scope == "output":
         return df[df["n_syn_out"].fillna(0) > 0]
+    if scope == "reciprocal":
+        return df[(df["n_syn_in"].fillna(0) > 0) & (df["n_syn_out"].fillna(0) > 0)]
     return df
 
 
@@ -1249,8 +1283,9 @@ def resolve_plot(
         with timer("build_unified_frame"):
             df = _build_unified_frame(nq)
         # Synthetic 'direction' column on the unified frame so the SPA can
-        # bind hue to it; values mirror the direction-class buckets used by
-        # the per-axis scope filter below.
+        # bind hue to it; values are the direction-class buckets ('in only',
+        # 'out only', 'reciprocal'). With panel scope=both, this lets the
+        # user split a single chart by direction visually.
         if not df.empty:
             df["direction"] = df.apply(_direction_class, axis=1)
 
@@ -1263,15 +1298,17 @@ def resolve_plot(
         "size": bindings.get("size") if bindings.get("size") is not None else spec.size,
         "weight": bindings.get("weight") if bindings.get("weight") is not None else spec.weight,
     }
-    # Per-axis scope filter (only meaningful on the unified frame). Each
-    # value is "pre" / "post" / "both"; "both" means no filter for that axis.
-    # Filters compose via AND — set x_scope=post AND y_scope=pre to select
-    # reciprocal partners.
-    x_scope = (bindings.get("x_scope") or "both") if bindings else "both"
-    y_scope = (bindings.get("y_scope") or "both") if bindings else "both"
+    # Panel-level scope filter (only meaningful on the unified frame). One
+    # picker per panel applied uniformly to every channel, instead of the
+    # legacy per-axis pair (x_scope + y_scope) that AND-composed:
+    #   - "input"      — rows where the partner gives input (loose).
+    #   - "output"     — rows where the partner receives output (loose).
+    #   - "reciprocal" — strict intersection (both directions present).
+    #   - "both"       — no filter; binding `hue=direction` recovers the
+    #                    direction split visually on a single chart.
+    scope = (bindings.get("scope") or "both") if bindings else "both"
     if spec.data_query.source == "partners_both" and not df.empty:
-        df = _apply_scope_filter(df, x_scope)
-        df = _apply_scope_filter(df, y_scope)
+        df = _apply_scope_filter(df, scope)
     # Kind auto-pick for dynamic specs is deferred until after the decoration
     # merge — we need to know whether `bound["x"]` is numeric on the resolved
     # frame to choose between histogram (numeric x → bin & count) and bar
@@ -1317,15 +1354,20 @@ def resolve_plot(
         # `pt_position` is internal scaffolding for the spatial computation
         # below — drop it from the column materialization so it doesn't leak
         # into the figure as an array-valued column.
+        # The materialization is one root-id-keyed `.map(...)` per attached
+        # column; cheap each but with 20+ decoration columns × 5K partners
+        # the loop has shown up as a multi-hundred-ms tail. Timed so it's
+        # visible in the request log.
         if served:
-            all_keys: set[str] = set()
-            for rec in served.values():
-                all_keys.update(rec.keys())
-            all_keys.discard("pt_position")
-            for k in all_keys:
-                df[k] = df["root_id"].astype(int).map(
-                    lambda rid, _k=k: served.get(rid, {}).get(_k)
-                )
+            with timer("attach_decoration_columns"):
+                all_keys: set[str] = set()
+                for rec in served.values():
+                    all_keys.update(rec.keys())
+                all_keys.discard("pt_position")
+                for k in all_keys:
+                    df[k] = df["root_id"].astype(int).map(
+                        lambda rid, _k=k: served.get(rid, {}).get(_k)
+                    )
 
     # Apply cell filters AFTER decoration columns are materialized — predicates
     # reference `<table>.<col>` which only exists post-merge. Stash the pre/post
@@ -1375,46 +1417,51 @@ def resolve_plot(
             root_soma_position_nm=root_soma,
         )
 
-        manifest = list(spatial_provider.feature_manifest())
-        intrinsic_specs = [s for s in manifest if s.scope == "partner_intrinsic"]
-        per_direction_specs = [s for s in manifest if s.scope == "partner_per_direction"]
+        # Spatial feature columns: one `.map` per (column, direction).
+        # ~5–10 columns × up-to-2 directions × 5K partners — usually under
+        # 100ms, but worth surfacing so a regression here is visible
+        # rather than disappearing into `processing_ms`.
+        with timer("attach_spatial_columns"):
+            manifest = list(spatial_provider.feature_manifest())
+            intrinsic_specs = [s for s in manifest if s.scope == "partner_intrinsic"]
+            per_direction_specs = [s for s in manifest if s.scope == "partner_per_direction"]
 
-        # Intrinsic columns: same value for both directions.
-        for spec_entry in intrinsic_specs:
-            col = spec_entry.name
-            df[col] = df["root_id"].astype(int).map(
-                lambda rid, _c=col: spatial_features.intrinsic.get(rid, {}).get(_c)
+            # Intrinsic columns: same value for both directions.
+            for spec_entry in intrinsic_specs:
+                col = spec_entry.name
+                df[col] = df["root_id"].astype(int).map(
+                    lambda rid, _c=col: spatial_features.intrinsic.get(rid, {}).get(_c)
+                )
+
+            # Per-direction columns. Mirror the SPA's unified-table schema: on
+            # `partners_both` they appear as `<col>_in` / `<col>_out`; on a
+            # single-direction source they appear as plain `<col>`.
+            def _attach_per_direction(col_name: str, lookup_in: dict, lookup_out: dict) -> None:
+                if source == "partners_both":
+                    if lookup_in:
+                        df[f"{col_name}_in"] = df["root_id"].astype(int).map(
+                            lambda rid, _l=lookup_in: _l.get(rid)
+                        )
+                    if lookup_out:
+                        df[f"{col_name}_out"] = df["root_id"].astype(int).map(
+                            lambda rid, _l=lookup_out: _l.get(rid)
+                        )
+                else:
+                    lookup = lookup_in if source == "partners_in" else lookup_out
+                    if lookup:
+                        df[col_name] = df["root_id"].astype(int).map(
+                            lambda rid, _l=lookup: _l.get(rid)
+                        )
+
+            _attach_per_direction(
+                "median_dist_to_target_soma",
+                median_dist_in if want_in else {},
+                median_dist_out if want_out else {},
             )
-
-        # Per-direction columns. Mirror the SPA's unified-table schema: on
-        # `partners_both` they appear as `<col>_in` / `<col>_out`; on a
-        # single-direction source they appear as plain `<col>`.
-        def _attach_per_direction(col_name: str, lookup_in: dict, lookup_out: dict) -> None:
-            if source == "partners_both":
-                if lookup_in:
-                    df[f"{col_name}_in"] = df["root_id"].astype(int).map(
-                        lambda rid, _l=lookup_in: _l.get(rid)
-                    )
-                if lookup_out:
-                    df[f"{col_name}_out"] = df["root_id"].astype(int).map(
-                        lambda rid, _l=lookup_out: _l.get(rid)
-                    )
-            else:
-                lookup = lookup_in if source == "partners_in" else lookup_out
-                if lookup:
-                    df[col_name] = df["root_id"].astype(int).map(
-                        lambda rid, _l=lookup: _l.get(rid)
-                    )
-
-        _attach_per_direction(
-            "median_dist_to_target_soma",
-            median_dist_in if want_in else {},
-            median_dist_out if want_out else {},
-        )
-        for spec_entry in per_direction_specs:
-            in_lookup = spatial_features.per_direction_in.get(spec_entry.name, {}) if want_in else {}
-            out_lookup = spatial_features.per_direction_out.get(spec_entry.name, {}) if want_out else {}
-            _attach_per_direction(spec_entry.name, in_lookup, out_lookup)
+            for spec_entry in per_direction_specs:
+                in_lookup = spatial_features.per_direction_in.get(spec_entry.name, {}) if want_in else {}
+                out_lookup = spatial_features.per_direction_out.get(spec_entry.name, {}) if want_out else {}
+                _attach_per_direction(spec_entry.name, in_lookup, out_lookup)
 
     # Dynamic kind dispatch happens here (post-decoration-merge) so we can
     # inspect dtypes on the resolved frame:
@@ -1498,17 +1545,41 @@ def resolve_plot(
         )
     spec = spec.model_copy(update={"color_map": color_map, "x_universe": x_universe})
 
-    # Validate axes (x/y) strictly — there's no chart without them, so a
-    # missing column should surface as a clear 422 the user can fix from
-    # the URL. `weight` is a no-op on non-bar kinds (silently ignored)
-    # so it's not in the strict-validation set.
+    # Bound axes that can't render → placeholder figure, not a red 422.
+    # Two cases handled symmetrically:
+    #   - column missing from the frame (per-direction spatial features
+    #     skip attachment when no partner has a value, decoration tables
+    #     that didn't load).
+    #   - column present but every partner's value is null.
+    # Hue / size graceful-degrade above; only x / y are panel-fatal so
+    # they get the placeholder treatment.
+    placeholder_msg: str | None = None
     for ch in ("x", "y"):
         col = getattr(spec, ch)
-        if col and col not in df.columns:
-            raise ValueError(
-                f"Column {col!r} (bound to `{ch}`) is not on the partner "
-                f"records — pick one of the active decoration columns."
+        if not col:
+            continue
+        if col not in df.columns:
+            placeholder_msg = (
+                f"No data — '{_format_label(col)}' isn't available for this neuron."
             )
+            break
+        if len(df) > 0 and df[col].isna().all():
+            placeholder_msg = (
+                f"No data — every partner has a null '{_format_label(col)}' here."
+            )
+            break
+    if placeholder_msg is not None:
+        fig = _empty_figure_with_message(placeholder_msg)
+        _apply_layout(fig, spec.layout)
+        return {
+            "figure": json.loads(fig.to_json()),
+            "meta": {
+                "matched_count": matched_count,
+                "pre_filter_count": pre_filter_count,
+                "filtered": bool(cell_filters),
+                "placeholder": True,
+            },
+        }
     # Hue / size gracefully degrade when missing: drop the binding so the
     # chart still renders (no color split / fixed marker size) instead of
     # 422-ing the request. Common case: a preset binds `hue=cell_type`
@@ -1535,25 +1606,36 @@ def resolve_plot(
         raise ValueError(f"Unknown plot kind: {spec.kind!r}")
     with timer(f"plot_builder[{spec.kind}]"):
         fig = builder(df, spec)
-    _apply_layout(fig, spec.layout)
-    _apply_auto_titles(fig, spec)
-    _maybe_flip_depth(fig, spec)
-    # Depth-axis decorations live in `provider.meta()` for cortex; null
-    # provider returns an empty meta and the guides become no-ops.
-    provider_meta = spatial_provider.meta() if spatial_provider is not None else {}
-    _apply_depth_guides(
-        fig, spec,
-        provider_meta.get("depth_range"),
-        provider_meta.get("layer_boundaries"),
-        provider_meta.get("layer_names"),
-    )
-    if show_cell_depth and spatial_provider is not None:
-        target_pos = _target_oriented_position(nq, spatial_provider)
-        _apply_cell_position_marker(fig, spec, target_pos)
+    # Layout / depth-guide / cell-marker pass. Each step is small, but a
+    # bare `to_json` on a stripplot with thousands of points has been
+    # observed in the 100–300ms range, and the depth-guide annotations
+    # alone scale with layer count. Wrapping the whole post-build phase
+    # surfaces it as `plot_finalize` so the residual in `processing_ms`
+    # actually corresponds to framework + I/O overhead.
+    with timer("plot_finalize"):
+        _apply_layout(fig, spec.layout)
+        _apply_auto_titles(fig, spec)
+        _maybe_flip_depth(fig, spec)
+        # Depth-axis decorations live in `provider.meta()` for cortex; null
+        # provider returns an empty meta and the guides become no-ops.
+        provider_meta = spatial_provider.meta() if spatial_provider is not None else {}
+        _apply_depth_guides(
+            fig, spec,
+            provider_meta.get("depth_range"),
+            provider_meta.get("layer_boundaries"),
+            provider_meta.get("layer_names"),
+        )
+        if show_cell_depth and spatial_provider is not None:
+            target_pos = _target_oriented_position(nq, spatial_provider)
+            _apply_cell_position_marker(fig, spec, target_pos)
     # Plotly's to_json returns a JSON string; parse it back so Flask jsonify
-    # nests it as a real object rather than a quoted string.
+    # nests it as a real object rather than a quoted string. Timed because
+    # plotly's serializer is the long pole on heavy figures (per-point
+    # marker arrays, customdata, hovertemplate compilation).
+    with timer("plot_to_json"):
+        figure_json = json.loads(fig.to_json())
     return {
-        "figure": json.loads(fig.to_json()),
+        "figure": figure_json,
         "meta": {
             "matched_count": matched_count,
             "pre_filter_count": pre_filter_count,

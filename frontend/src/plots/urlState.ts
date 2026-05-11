@@ -20,9 +20,9 @@
  *   - `useSearchParams` doesn't have to register N hooks per panel.
  */
 
-export type AxisScope = "pre" | "post" | "both";
+export type PanelScope = "input" | "output" | "both" | "reciprocal";
 
-export const AXIS_SCOPES: AxisScope[] = ["both", "pre", "post"];
+export const PANEL_SCOPES: PanelScope[] = ["both", "input", "output", "reciprocal"];
 
 export interface PlotBindings {
   x?: string | null;
@@ -33,12 +33,14 @@ export interface PlotBindings {
    *  `x=cell_type, weight=n_syn_in` shows synapses-per-cell-type instead of
    *  partners-per-cell-type. Silently ignored on scatter / histogram. */
   weight?: string | null;
-  /** Per-axis pre/post scope. Filters the unified frame: `pre` keeps rows
-   *  where `n_syn_in > 0`, `post` keeps rows where `n_syn_out > 0`, `both`
-   *  is the no-op default. Combine x_scope=post + y_scope=pre to isolate
-   *  reciprocal partners. */
-  x_scope?: AxisScope | null;
-  y_scope?: AxisScope | null;
+  /** Panel-level direction scope on the unified frame. Applied uniformly to
+   *  every channel — replaces the legacy per-axis x_scope/y_scope pair.
+   *    - `input`      keeps rows where `n_syn_in > 0` (loose, includes recip).
+   *    - `output`     keeps rows where `n_syn_out > 0` (loose, includes recip).
+   *    - `reciprocal` keeps rows where both > 0 (strict intersection).
+   *    - `both`       no-op default; bind `hue=direction` to recover the
+   *                   direction split visually instead of as a row filter. */
+  scope?: PanelScope | null;
   /** When at least one bound axis is depth-shaped, draw the target neuron's
    *  own soma depth as a reference glyph (dashed line on one axis, open
    *  circle on the diagonal when both axes are depth). Default ON when
@@ -68,9 +70,14 @@ export function parseVizParam(raw: string | null): PlotBindings {
         const v = (obj as Record<string, unknown>)[k];
         if (typeof v === "string" && v.length > 0) out[k] = v;
       }
-      for (const k of ["x_scope", "y_scope"] as const) {
-        const v = (obj as Record<string, unknown>)[k];
-        if (v === "pre" || v === "post" || v === "both") out[k] = v;
+      const scope = (obj as Record<string, unknown>).scope;
+      if (
+        scope === "input" ||
+        scope === "output" ||
+        scope === "both" ||
+        scope === "reciprocal"
+      ) {
+        out.scope = scope;
       }
       // `show_cell_depth` only persists when explicitly false — the default
       // is ON, so omitting the key keeps the URL tight in the common case.
@@ -91,9 +98,9 @@ export function encodeVizParam(bindings: PlotBindings): string {
     const v = bindings[k];
     if (typeof v === "string" && v.length > 0) out[k] = v;
   }
-  for (const k of ["x_scope", "y_scope"] as const) {
-    const v = bindings[k];
-    if (v && v !== "both") out[k] = v;  // default "both" is implicit
+  if (bindings.scope && bindings.scope !== "both") {
+    // Default `both` is implicit; only persist the non-default scopes.
+    out.scope = bindings.scope;
   }
   // Only emit when explicitly off — default is ON, so the URL stays tight
   // in the common case. Matches `parseVizParam`'s asymmetric handling.

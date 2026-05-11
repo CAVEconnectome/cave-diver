@@ -64,19 +64,28 @@ class DecorationService:
     """Holds the SWR caches, ticket store, and worker pool for one Flask app."""
 
     def __init__(self, app):
-        from .swr import LayeredSwrCache, SwrCache  # local import: avoid cycles at module-load time
+        from .swr import LayeredSwrCache  # local import: avoid cycles at module-load time
         from .revalidation import RevalidationExecutor
         from .warmup import PeriodicWarmer
         from .cache_lifecycle import retention_class_for
         from .object_store import build_l2_stores
 
         self._app = app
-        # Executor is constructed BEFORE the caches so it can be passed to
-        # LayeredSwrCache for fire-and-forget L2 writes. Order matters —
-        # flipping it back will trip a startup AttributeError.
+        # Two distinct executors:
+        # - `self.executor` (RevalidationExecutor): runs decoration
+        #   revalidation closures (`_refresh_soma`, `_refresh_table`)
+        #   which need a Flask app context (CAVEclient setup) and
+        #   per-key dedup (avoid stampeding refetches on the same
+        #   (ds, mv, table) snapshot).
+        # - `dcv_l2_writer` (plain ThreadPoolExecutor, owned by
+        #   `_init_l2_infrastructure`): used by every LayeredSwrCache
+        #   for fire-and-forget L2 writes. L2 writes don't need app
+        #   context and are idempotent for a given cache key, so the
+        #   simpler executor is the right tool.
         self.executor = RevalidationExecutor(
             app, max_workers=app.config["DECORATION_REVALIDATION_WORKERS"]
         )
+        l2_writer = app.extensions.get("dcv_l2_writer")
         l2 = build_l2_stores(app)  # {} when GCS_CACHE_BUCKET is unset
 
         # Retention resolver — consulted on every L2 read/write to pick
@@ -101,10 +110,13 @@ class DecorationService:
                 return None
             return {retention: l2[retention][kind] for retention in l2}
 
-        # Materialized-mode caches use LayeredSwrCache so the warmer's writes
-        # fan out to GCS and every pod can read the same warm snapshot. Live-
-        # mode caches stay plain SwrCache: short TTLs (seconds–minutes) make
-        # the GCS round-trip a net loss on those reads.
+        # Both modes use LayeredSwrCache; live-mode caches just pass `l2=None`
+        # to short-circuit the disk layer. Short live-mode TTLs (seconds–
+        # minutes) make a GCS round-trip a net loss on those reads, and a
+        # snapshot of "live" data is meaningless across pod restarts anyway.
+        # `LayeredSwrCache(l2=None)` is bit-identical to a plain SwrCache —
+        # see `_resolve_l2_store` early-out — so this is purely a cache-
+        # primitive consolidation, no behavior change.
         #
         # Two caches: `num_soma_*` (per-soma-table count + cell_id summary)
         # and `table_decorations_*` (generic annotation table snapshot).
@@ -116,25 +128,27 @@ class DecorationService:
             soft_ttl=app.config["CACHE_DECORATION_SOFT_TTL_SECONDS"],
             hard_ttl=app.config["CACHE_DECORATION_HARD_TTL_SECONDS"],
             l2=_l2_for_kind("num_soma"),
-            executor=self.executor,
+            executor=l2_writer,
             retention_resolver=_resolve_retention,
         )
-        self.num_soma_live = SwrCache(
+        self.num_soma_live = LayeredSwrCache(
             soft_ttl=app.config["CACHE_DECORATION_LIVE_SOFT_TTL_SECONDS"],
             hard_ttl=app.config["CACHE_DECORATION_LIVE_HARD_TTL_SECONDS"],
+            l2=None,
         )
         self.table_decorations_mat = LayeredSwrCache(
             soft_ttl=app.config["CACHE_DECORATION_SOFT_TTL_SECONDS"],
             hard_ttl=app.config["CACHE_DECORATION_HARD_TTL_SECONDS"],
             maxsize=64,  # # of distinct (ds, mv, table) snapshots in memory
             l2=_l2_for_kind("table"),
-            executor=self.executor,
+            executor=l2_writer,
             retention_resolver=_resolve_retention,
         )
-        self.table_decorations_live = SwrCache(
+        self.table_decorations_live = LayeredSwrCache(
             soft_ttl=app.config["CACHE_DECORATION_LIVE_SOFT_TTL_SECONDS"],
             hard_ttl=app.config["CACHE_DECORATION_LIVE_HARD_TTL_SECONDS"],
             maxsize=64,
+            l2=None,
         )
         # Tickets: short-lived per-request snapshots so the SPA's poll can compute deltas.
         self.tickets: TTLCache = TTLCache(maxsize=4096, ttl=_TICKET_TTL_SECONDS)

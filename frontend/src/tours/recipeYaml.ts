@@ -95,7 +95,7 @@ function emitPlot(plot: TourPlot, lines: string[], indent: number): void {
 
 function emitBindings(b: TourPlotBindings, lines: string[], indent: number): void {
   const pad = " ".repeat(indent);
-  for (const k of ["x", "y", "hue", "size", "weight", "x_scope", "y_scope"] as const) {
+  for (const k of ["x", "y", "hue", "size", "weight", "scope"] as const) {
     const v = b[k];
     if (typeof v === "string" && v.length > 0) {
       lines.push(`${pad}${k}: ${quoteIfNeeded(v)}`);
@@ -122,7 +122,7 @@ function emitDescription(text: string, lines: string[], indent: number): void {
 
 function hasAnyBinding(b: TourPlotBindings): boolean {
   return Boolean(
-    b.x || b.y || b.hue || b.size || b.weight || b.x_scope || b.y_scope || b.show_cell_depth === false,
+    b.x || b.y || b.hue || b.size || b.weight || b.scope || b.show_cell_depth === false,
   );
 }
 

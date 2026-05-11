@@ -36,9 +36,6 @@ _DEFAULTS = {
     # session; live mode short-circuits the cache by including
     # mat_version="live" in the key (always fresh).
     "CACHE_SPATIAL_FEATURES_TTL_SECONDS": 30 * 60,
-    # Soma summary (num_soma + soma_pt_position) for the queried cell.
-    # Same invariance argument as spatial features.
-    "CACHE_SOMA_SUMMARY_TTL_SECONDS": 30 * 60,
     "CACHE_DECORATION_SOFT_TTL_SECONDS": 4 * 60 * 60,
     "CACHE_DECORATION_HARD_TTL_SECONDS": 24 * 60 * 60,
     "CACHE_DECORATION_LIVE_SOFT_TTL_SECONDS": 5 * 60,

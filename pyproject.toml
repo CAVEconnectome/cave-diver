@@ -30,31 +30,33 @@ classifiers = [
 ]
 dependencies = [
     # Core CAVE stack — bumped for TableManager (8.x) and the modern nglui helpers (4.x).
-    "caveclient>=8.0.1",
-    "nglui>=4.7.3",
-    "standard-transform>=1",
+    "caveclient>=8.0.1,<9",
+    "nglui>=4.7.3,<5",
+    "standard-transform>=1,<2",
     # New API backend
-    "flask>=3.0",
-    "middle-auth-client>=3.18",
-    "flask-cors>=4.0",
-    "pydantic>=2.5",
-    "pyyaml>=6.0",
-    "cachetools>=5.3",
+    "flask>=3.0,<4",
+    "middle-auth-client>=3.18,<4",
+    "flask-cors>=4.0,<5",
+    "pydantic>=2.5,<3",
+    "pyyaml>=6.0,<7",
+    "cachetools>=5.3,<6",
     "gunicorn>=21.2",
     # Data + plotting (server emits Plotly figure JSON)
-    "pandas",
-    "numpy",
-    "plotly>=5",
+    "pandas<4",
+    "numpy<3",
+    "plotly>=5,<7",
     # Optional L2 cache backend (decoration snapshots + synapse dfs).
     # When CDV_GCS_CACHE_BUCKET is unset the import is lazy-only — local
     # dev pays no auth/network cost. Top-level dep so a configured
     # deployment doesn't have to install an extra.
-    "google-cloud-storage>=2.14",
+    "google-cloud-storage>=2.14,<4",
     # Note: `requests` is needed transitively (caveclient / nglui /
     # middle-auth-client all pull it) but isn't listed here directly —
     # nothing in our source imports it. `dfbridge`, `loguru`, `orjson`
     # were removed; none were imported in the codebase and none are
     # transitively required.
+    "cloud-volume>=12.13.1,<13",
+    "cloud-files>=6.3.0,<7",
 ]
 
 [project.scripts]

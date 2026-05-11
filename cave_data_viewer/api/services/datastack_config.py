@@ -1,4 +1,5 @@
 import logging
+import time as _time
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,8 @@ from cachetools import LRUCache
 from pydantic import BaseModel, Field
 
 from flask import current_app
+
+from .timing import record_stage, timer
 
 logger = logging.getLogger(__name__)
 
@@ -279,8 +282,7 @@ class TourPlotBindings(BaseModel):
     hue: str | None = None
     size: str | None = None
     weight: str | None = None
-    x_scope: str | None = None
-    y_scope: str | None = None
+    scope: str | None = None
     show_cell_depth: bool | None = None
 
 
@@ -465,7 +467,16 @@ def load_datastack_config(datastack: str) -> DatastackConfig:
 def clear_datastack_config_cache() -> None:
     _config_cache.clear()
     _aligned_volume_config_cache.clear()
-    _aligned_volume_name_cache.clear()
+    # `dcv_datastack_info_cache` is an app extension keyed off the live
+    # Flask app; clear it when an app context is available. Outside a
+    # request context (e.g. unit tests calling this helper directly) it's
+    # a no-op — there's nothing to clear.
+    try:
+        cache = current_app.extensions.get("dcv_datastack_info_cache")
+        if cache is not None:
+            cache.clear()
+    except RuntimeError:
+        pass
 
 
 # Same caching pattern as `_config_cache` — stash mtime for hot-reload in dev,
@@ -507,37 +518,69 @@ def load_aligned_volume_config(aligned_volume: str | None) -> AlignedVolumeConfi
     return cfg
 
 
-# Aligned-volume name is a stable property of a datastack — never changes
-# during a deployment's lifetime. Cache it process-wide rather than re-reading
-# the datastack-info round-trip on every request.
-_aligned_volume_name_cache: dict[str, str | None] = {}
+def cached_datastack_info(datastack: str, client, *, stages=None) -> dict | None:
+    """Long-TTL cache around `client.info.get_datastack_info()`.
+
+    The dict it returns — aligned_volume, soma_table, synapse_table,
+    viewer_resolution_*, viewer_site — is a stable property of the
+    datastack: it does not shift with mat_version, and operator-level
+    reassignments (e.g. moving a datastack to a different aligned_volume)
+    are extremely rare. A 24h TTL turns the per-request CAVE info round-
+    trip (~150–300ms cold) into a single fetch per pod per datastack per
+    day.
+
+    Caches `None` on exception too. A misconfigured datastack would
+    otherwise hammer the info service every request and stack hundreds
+    of ms onto `cave_ms` for no useful effect.
+
+    Routes through the `dcv_datastack_info_cache` SwrCache so the lookup
+    cost is visible per-request as `datastack_info_l1_hit` (warm) or
+    `datastack_info_query` (cold CAVE round-trip).
+    """
+    cache = current_app.extensions.get("dcv_datastack_info_cache")
+    if cache is not None:
+        t0 = _time.perf_counter()
+        hit_layer = cache.get_with_layer(datastack)
+        elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+        if hit_layer is not None:
+            value, _freshness, layer = hit_layer
+            record_stage(
+                f"datastack_info_{layer}_hit", elapsed_ms, stages=stages,
+            )
+            return value
+    with timer("datastack_info_query", stages=stages):
+        try:
+            info = client.info.get_datastack_info()
+        except Exception:
+            info = None
+    if info is not None and not isinstance(info, dict):
+        info = None
+    if cache is not None:
+        cache.set(datastack, info)
+    return info
 
 
 def resolve_aligned_volume_name(datastack: str, client) -> str | None:
-    """Look up the aligned_volume name for `datastack` via `client.info`.
+    """Look up the aligned_volume name for `datastack` via the cached
+    datastack-info dict.
 
     `client.info.get_datastack_info()` returns a dict whose `aligned_volume`
     key is itself a `{"name": "minnie65_phase3", ...}` dict — that's where
     the volume name lives. (`InfoServiceClient` has no standalone
-    `get_aligned_volume()` method; calling it would silently fail back here
-    and the spatial transform would never load.) Cached by datastack so
-    subsequent requests skip the info-service round-trip.
+    `get_aligned_volume()` method; calling it would silently fail back
+    here and the spatial transform would never load.) Backed by
+    `cached_datastack_info` so the info-service round-trip happens at
+    most once per datastack per 24h per pod.
     """
-    if datastack in _aligned_volume_name_cache:
-        return _aligned_volume_name_cache[datastack]
-    try:
-        info = client.info.get_datastack_info()
-    except Exception:
-        info = None
-    name: str | None = None
-    if isinstance(info, dict):
-        av = info.get("aligned_volume")
-        if isinstance(av, dict):
-            raw = av.get("name")
-            if isinstance(raw, str) and raw:
-                name = raw
-    _aligned_volume_name_cache[datastack] = name
-    return name
+    info = cached_datastack_info(datastack, client)
+    if not isinstance(info, dict):
+        return None
+    av = info.get("aligned_volume")
+    if isinstance(av, dict):
+        raw = av.get("name")
+        if isinstance(raw, str) and raw:
+            return raw
+    return None
 
 
 def aligned_volume_config_for(datastack: str, client) -> AlignedVolumeConfig:

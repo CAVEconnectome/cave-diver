@@ -4,10 +4,15 @@ from cachetools.keys import hashkey
 from flask import Blueprint, current_app, jsonify, request
 
 from ..auth import auth_required, current_token, is_dev_bypass
-from ..caches import table_meta_cache, unique_values_cache
+from ..caches import table_meta_cache
 from ..cave import request_client
 from ..errors import ApiError
-from ..services.datastack_config import latest_valid_mat_version, load_datastack_config
+from ..services.cache_lifecycle import cache_datastack
+from ..services.datastack_config import (
+    cached_datastack_info,
+    latest_valid_mat_version,
+    load_datastack_config,
+)
 from ..services.keys import is_live
 
 bp = Blueprint("datastacks", __name__, url_prefix="/datastacks")
@@ -47,7 +52,12 @@ def _client_for(ds: str) -> "object":
 @auth_required
 def info(ds: str):
     client = _client_for(ds)
-    info_dict = client.info.get_datastack_info()
+    # 24h cache covers all the fields below; a warm pod serves /info
+    # without an info-service round-trip. None if CAVE's info service
+    # is unreachable or the datastack is unconfigured — we still return
+    # a useful payload (datastack name + live_mode) so the SPA doesn't
+    # crash on partial responses.
+    info_dict = cached_datastack_info(ds, client) or {}
     cfg = load_datastack_config(ds)
     return jsonify({
         "datastack": ds,
@@ -287,20 +297,25 @@ def table_values(ds: str, table: str):
                 f"cannot resolve 'live' to a unique-values lookup.",
             )
         client.materialize.version = latest
-    # Cache in `unique_values_cache` (7-day TTL by default), NOT
-    # `table_meta_cache` (1h). Distinct-string-values for a *materialized*
-    # version are immutable by definition — the version is frozen at
-    # `materialize.create()` time, the column data doesn't change, so the
-    # answer is stable for as long as that version exists. The 7-day cap
-    # exists only because cachetools.TTLCache requires a finite TTL.
+    # `dcv_unique_values_cache` is a `LayeredSwrCache(immutable=True)`:
+    # for materialized versions the values are frozen at
+    # `materialize.create()` time, so the cached entry is bit-identical
+    # to a re-fetch. Bucket lifecycle handles expiry.
+    #
+    # Stores the bare `{column: [values]}` dict — the same shape
+    # `services/categorical.py` writes — so both consumers share one
+    # cache entry rather than racing on differently-prefixed keys.
+    # The `{table, values}` payload is shaped here at read time.
     cache_version = client.materialize.version
-    cache_key = hashkey("values", ds, table, cache_version)
-    if cache_key in unique_values_cache:
-        return jsonify(unique_values_cache[cache_key])
+    cache_key = (cache_datastack(ds), cache_version, table)
+    cache = current_app.extensions["dcv_unique_values_cache"]
+    hit = cache.get(cache_key)
+    if hit is not None:
+        return jsonify({"table": table, "values": hit[0]})
     try:
         values = client.materialize.get_unique_string_values(table)
     except Exception as exc:
         raise ApiError(502, "cave_upstream", str(exc)) from exc
-    payload = {"table": table, "values": values or {}}
-    unique_values_cache[cache_key] = payload
-    return jsonify(payload)
+    values = values or {}
+    cache.set(cache_key, values)
+    return jsonify({"table": table, "values": values})

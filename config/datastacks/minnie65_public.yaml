@@ -117,7 +117,7 @@ recipes:
     - id: plot-5
       bindings:
         x: median_dist_to_target_soma_out
-        x_scope: post
+        scope: output
       unfiltered: true
     - id: plot-6
       bindings:
@@ -132,7 +132,7 @@ recipes:
         y: soma_depth
         hue: cell_type_multifeature_combo.cell_type
         size: mean_size_in
-        y_scope: pre
+        scope: input
     cells: "proofreading_status_and_strategy.status_axon:eq:true"
   - id: classic-microns-v0
     title: Classic View

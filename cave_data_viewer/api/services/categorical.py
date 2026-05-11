@@ -29,9 +29,9 @@ slot is visibly different from "missing".
 
 import colorsys
 
-from cachetools.keys import hashkey
+from flask import current_app
 
-from ..caches import unique_values_cache
+from .cache_lifecycle import cache_datastack
 
 
 # tab10 — the canonical categorical palette. Slots 0–9.
@@ -90,11 +90,20 @@ def get_unique_values(
     if mat_version == "live" or mat_version is None:
         return list(_fetch(client_factory, table).get(column) or [])
 
-    key = hashkey("unique_values", ds, mat_version, table)
-    cached = unique_values_cache.get(key)
-    if cached is None:
-        cached = _fetch(client_factory, table)
-        unique_values_cache[key] = cached
+    # Tuple-shaped key with `(cache_ds, mat_version)` as the leading
+    # elements so the L2 retention resolver can pick default vs
+    # longlived without re-deriving them. `cache_datastack` resolves any
+    # per-datastack alias so two datastacks backed by the same data
+    # share one cache entry.
+    cache = current_app.extensions["dcv_unique_values_cache"]
+    key = (cache_datastack(ds), mat_version, table)
+    hit = cache.get(key)
+    if hit is None:
+        values = _fetch(client_factory, table)
+        cache.set(key, values)
+        cached = values
+    else:
+        cached = hit[0]
     return list(cached.get(column) or [])
 
 

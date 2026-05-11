@@ -2,7 +2,7 @@
 
 Templates are declarative recipes (YAML or `LinkTemplate(...)` objects). The
 client posts `{template, query: {root_id, ...}}` and the resolver here pulls
-synapse rows from `query_cache` (warmed by an earlier `/connectivity` request),
+synapse rows from `dcv_synapse_cache` (warmed by an earlier `/connectivity` request),
 shapes them, and composes a ViewerState via the building blocks in
 `services/state`. The dataframe never crosses the wire.
 

@@ -1,8 +1,8 @@
 """GCS-backed bytes store for the L2 cache layer.
 
-Used by `LayeredSwrCache` (decoration snapshots) and directly by
-`NeuronQuery._synapse_df` (synapse DataFrames). Always pickles the body
-regardless of `_DEFAULT_SERIALIZER` — L2 needs bytes; L1 may not.
+Used by `LayeredSwrCache` for L2 reads/writes. Pickles the body to
+bytes — the L1 layer holds live Python objects, so the pickle round-
+trip is L2-only.
 
 Body format: a pickled `(value, fetched_at)` tuple. Storing the timestamp
 inside the body keeps the read path to one round-trip and matches the
@@ -271,7 +271,13 @@ class GcsObjectStore:
         logger.info("gcs_delete_ok obj=%s", obj_name)
 
 
-_KINDS: tuple[str, ...] = ("num_soma", "table", "synapse")
+_KINDS: tuple[str, ...] = (
+    "num_soma",
+    "table",
+    "synapse",
+    "spatial_features",
+    "unique_values",
+)
 _RETENTION_CLASSES: tuple[str, ...] = ("default", "longlived")
 
 

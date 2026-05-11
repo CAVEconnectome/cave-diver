@@ -198,7 +198,7 @@ function coercePlots(raw: unknown, where: string, warnings: string[]): TourPlot[
 
 function coerceBindings(raw: Record<string, unknown>): TourPlotBindings {
   const out: TourPlotBindings = {};
-  for (const k of ["x", "y", "hue", "size", "weight", "x_scope", "y_scope"] as const) {
+  for (const k of ["x", "y", "hue", "size", "weight", "scope"] as const) {
     const v = raw[k];
     if (typeof v === "string" && v.length > 0) (out as Record<string, string>)[k] = v;
   }
