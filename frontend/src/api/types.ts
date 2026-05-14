@@ -351,3 +351,96 @@ export interface PlotSpecCatalogEntry {
 export interface PlotSpecCatalogResponse {
   specs: PlotSpecCatalogEntry[];
 }
+
+// ---- Feature Explorer ------------------------------------------------------
+
+export interface EmbeddingListItem {
+  id: string;
+  title: string;
+  description: string | null;
+  axes: [string, string];
+  id_column: string;
+  default_color_by: string | null;
+  /** Numeric columns eligible for kNN + range filter. `null` means "every
+   *  non-axis numeric on the parquet" — the backend auto-derives. */
+  feature_columns: string[] | null;
+  /** Categorical / object columns usable for color and equality filter. */
+  categorical_columns: string[];
+  /** Whether the parquet carries audit columns (source_root_id +
+   *  source_mat_version). Drives the cell-detail tooltip's provenance row. */
+  has_audit: boolean;
+}
+
+export interface EmbeddingKnnDefaults {
+  default_k: number;
+  max_k: number;
+  standardize: boolean;
+}
+
+export interface EmbeddingListResponse {
+  /** When false, every other field is omitted — the explorer is not
+   *  configured for this datastack and the SPA should hide /explore. */
+  enabled: boolean;
+  cell_id_source_table?: string;
+  knn?: EmbeddingKnnDefaults;
+  embeddings?: EmbeddingListItem[];
+}
+
+/** Color block carried on `/points` and at the top level of `/column`. Two
+ *  flavours: `parquet` (from the loaded frame, no CAVE round-trip) and
+ *  `decoration` (joined through the cell_id->root_id resolver at `mv`). */
+export interface EmbeddingColorBlock {
+  kind: "categorical" | "numeric";
+  source: "parquet" | "decoration";
+  column: string;
+  /** Positional values, one per `cell_ids[i]`. Nulls are valid in both
+   *  kinds (numeric → NaN/inf or genuinely missing; categorical → missing). */
+  values: Array<string | number | boolean | null>;
+  /** Only present for `source: "decoration"`. Lets the SPA show "12% of
+   *  cells couldn't be resolved at this mv". */
+  resolution_stats?: {
+    ok: number;
+    missing: number;
+    ambiguous: number;
+    no_decoration?: number;
+  };
+}
+
+export interface EmbeddingPointsResponse {
+  /** Stringified cell_ids — project-wide JSON convention even though
+   *  cell_ids fit in JS Number precision (consistency with root_ids). */
+  cell_ids: string[];
+  x: Array<number | null>;
+  y: Array<number | null>;
+  color?: EmbeddingColorBlock;
+}
+
+/** /column endpoint surfaces a single positional column (parquet or
+ *  decoration). Shape mirrors `EmbeddingColorBlock` — same payload at the
+ *  top level rather than nested under `color`. */
+export type EmbeddingColumnResponse = EmbeddingColorBlock;
+
+export interface EmbeddingKnnNeighbor {
+  cell_id: string;
+  distance: number;
+}
+
+export interface EmbeddingKnnResponse {
+  query_cell_id: string;
+  neighbors: EmbeddingKnnNeighbor[];
+}
+
+export type ResolutionStatus = "ok" | "missing" | "ambiguous";
+
+export interface CellRootResolution {
+  cell_id: string;
+  root_id: string | null;
+  status: ResolutionStatus;
+  /** Only populated when status === "ambiguous". */
+  candidates?: string[];
+}
+
+export interface ResolveRootsResponse {
+  mat_version: string | null;
+  resolutions: CellRootResolution[];
+}

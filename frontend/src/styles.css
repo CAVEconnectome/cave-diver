@@ -2717,3 +2717,85 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* ---- Feature Explorer (/explore) ---------------------------------------- */
+
+.explore {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 12px;
+  height: calc(100vh - 60px);
+}
+.explore-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.explore-canvas {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  min-height: 0;
+}
+.explore-empty,
+.explore-loading,
+.explore-error {
+  padding: 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.explore-error { color: #b00020; }
+
+.explore-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.explore-picker-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.explore-picker-static {
+  font-size: 13px;
+  color: var(--fg);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+.explore-picker-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.explore-picker-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.explore-resolution-stats {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+}
+
+.explore-scatter-loading {
+  padding: 40px 16px;
+  color: var(--muted);
+  text-align: center;
+}

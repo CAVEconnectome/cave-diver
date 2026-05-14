@@ -6,6 +6,7 @@ import { NotFound } from "./components/NotFound";
 import { TableRowsView } from "./components/TableRowsView";
 import { TableView } from "./components/TableView";
 import { Workspace } from "./components/Workspace";
+import { FeatureExplorer } from "./components/explore/FeatureExplorer";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +32,7 @@ export function App() {
             <Route path="neuron" element={<NeuronView />} />
             <Route path="tables" element={<TableView />} />
             <Route path="tables/:name" element={<TableRowsView />} />
+            <Route path="explore" element={<FeatureExplorer />} />
             {/* Catch-all inside the Workspace shell so the sidebar +
                 breadcrumb stay rendered around the 404 message —
                 makes recovery (typing a new id, going to tables) feel
