@@ -721,26 +721,52 @@ def _populate_cell_id_caches_from_soma(
     datastack: str,
     mat_version: int | None,
 ) -> None:
-    """The soma fetch is also the canonical source of cell-id ↔ root-id pairs
+    """The soma fetch is also a canonical source of cell-id ↔ root-id pairs
     for the single-soma case (the only case where cell_id is meaningful).
-    Every entry in the dict that has a `cell_id` field becomes:
-        _root_to_cell[(ds, root_id)]                = cell_id
-        _cell_to_root_mat[(ds, mv, cell_id)]        = root_id
 
-    Multi-soma roots are also recorded as `None` in the root→cell cache —
-    they're known-ambiguous, no point re-querying.
+    Populates two caches in `services/cell_id.py`:
+
+    - ``_root_to_cell`` (per-root, long TTL): every single-soma row pins
+      ``(ds, root_id) -> cell_id``; multi-soma roots pin ``-> None`` so
+      ambiguity is captured explicitly.
+    - The materialized universe entry ``_universe_mat[(ds, mv)]``: the
+      soma table is itself effectively a (cell_id, root_id) universe for
+      this mat_version, so populating the universe dict here means the
+      first ``cell_ids_to_root_ids`` call at the same mat_version skips
+      its lookup-view fetch. If the universe is already loaded
+      (someone hit the explorer first), merge into it; if not, build a
+      fresh one from the soma scan.
     """
-    from .cell_id import _cell_to_root_mat, _lock, _root_to_cell
+    from .cell_id import CellUniverse, _lock, _root_to_cell, _universe_mat
 
     with _lock:
+        cell_to_root_updates: dict[int, int | None] = {}
+        root_to_cell_updates: dict[int, int | None] = {}
         for rid, rec in soma_dict.items():
             if "cell_id" in rec:
                 cid = int(rec["cell_id"])
                 _root_to_cell[(datastack, rid)] = cid
                 if mat_version is not None:
-                    _cell_to_root_mat[(datastack, int(mat_version), cid)] = rid
+                    cell_to_root_updates[cid] = rid
+                    root_to_cell_updates[rid] = cid
             else:
                 _root_to_cell[(datastack, rid)] = None
+
+        if mat_version is not None and cell_to_root_updates:
+            key = (datastack, int(mat_version))
+            existing = _universe_mat.get(key)
+            if existing is None:
+                _universe_mat[key] = CellUniverse(
+                    cell_to_root=cell_to_root_updates,
+                    root_to_cell=root_to_cell_updates,
+                )
+            else:
+                # Merge into the existing universe. The universe dicts
+                # are frozen dataclass fields but dict identity is what
+                # matters — mutate in place since this is the canonical
+                # write path for this (ds, mv).
+                existing.cell_to_root.update(cell_to_root_updates)
+                existing.root_to_cell.update(root_to_cell_updates)
 
 
 # -- Lookup with SWR semantics --------------------------------------------------
