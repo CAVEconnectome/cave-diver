@@ -30,6 +30,7 @@ from ..services.datastack_config import check_live_allowed, load_datastack_confi
 from ..services.embeddings import (
     EmbeddingSpec,
     get_index,
+    join_decoration_column,
     load_embedding_frame,
     resolve_cell_ids_to_root_ids,
     reverse_resolve_root_id_to_cell_id,
@@ -84,17 +85,30 @@ def points(ds: str, embedding_id: str):
     Query params
     ------------
     color_by
-        Column to populate the ``color`` block with. Defaults to
-        ``spec.default_color_by``. v1 accepts only parquet-native columns;
-        decoration-table columns (``table.column``) are rejected with a
-        501 here — they're a follow-up task. When neither query nor default
-        names a color column the ``color`` block is omitted.
+        Column to populate the ``color`` block. Defaults to
+        ``spec.default_color_by``. Two name forms accepted:
+
+        - bare column (e.g. ``predicted_subclass``) — parquet-native;
+          served from the loaded frame.
+        - ``table.column`` (e.g. ``cell_type_multifeature_combo.cell_type``)
+          — decoration-sourced; the table must appear in ``?dec=`` and
+          ``mv`` is required.
+
+        When neither query nor default names a color column, the ``color``
+        block is omitted.
+    dec
+        Comma-separated list of attached decoration tables (same meaning
+        and shape as ``/neuron``'s ``?dec=``). Tables outside this list
+        cannot supply color/filter values, so a typo doesn't silently
+        fail the user.
+    mv
+        Materialization version (int or ``"live"``). Required for
+        decoration-sourced color; ignored when ``color_by`` is parquet-native.
 
     Response shape
     --------------
     ``{cell_ids, x, y, color?}``. Parallel arrays — keeps the wire size
-    sub-MB even for 500k-row embeddings (column-arrays vs per-point objects
-    is ~10x smaller in JSON).
+    sub-MB even for 500k-row embeddings.
     """
     cfg = load_datastack_config(ds)
     src = source_for(ds, cfg)
@@ -111,34 +125,86 @@ def points(ds: str, embedding_id: str):
         raise ApiError(404, "embedding_not_found", str(exc)) from exc
 
     color_by = request.args.get("color_by") or spec.default_color_by
+    attached_decorations = _parse_csv(request.args.get("dec"))
 
     df = load_embedding_frame(ds, spec, cache_ds=cfg.cache_alias or ds)
 
-    if color_by and color_by not in df.columns:
-        if "." in color_by:
-            # `table.column` form — decoration-sourced color isn't wired
-            # in v1; reject with a code the SPA can branch on.
-            raise ApiError(
-                501,
-                "decoration_color_not_implemented",
-                f"color_by={color_by!r}: decoration-table color is not yet "
-                "implemented; pass a parquet-native column for now.",
-            )
-        raise ApiError(
-            404,
-            "color_column_unknown",
-            f"color_by={color_by!r} is not a column in this embedding "
-            f"(available: {sorted(df.columns)})",
-        )
+    cell_id_strings = [str(v) for v in df[spec.id_column].tolist()]
+    cell_id_ints = [int(v) for v in df[spec.id_column].tolist()]
 
     payload: dict[str, Any] = {
-        "cell_ids": [str(v) for v in df[spec.id_column].tolist()],
+        "cell_ids": cell_id_strings,
         "x": _numeric_list(df[spec.axes[0]]),
         "y": _numeric_list(df[spec.axes[1]]),
     }
+
     if color_by:
-        payload["color"] = _color_block(df[color_by], color_by, source="parquet")
+        payload["color"] = _build_color_block(
+            ds=ds,
+            cfg=cfg,
+            spec=spec,
+            df=df,
+            color_by=color_by,
+            attached_decorations=attached_decorations,
+            cell_ids=cell_id_ints,
+            mat_version=request.args.get("mv"),
+        )
     return jsonify(payload)
+
+
+@bp.route("/<ds>/embeddings/<embedding_id>/column/<path:column>", methods=["GET"])
+@auth_required
+def column(ds: str, embedding_id: str, column: str):
+    """Single-column read for client-side filter / recolor / tooltip.
+
+    Path
+    ----
+    ``column`` accepts the same two forms as ``/points``' ``color_by``:
+    bare parquet column, or ``table.column`` for decoration. Uses ``path``
+    converter on the route so ``.`` survives the URL match.
+
+    Query params
+    ------------
+    Same as ``/points`` (``dec``, ``mv``).
+
+    Response shape
+    --------------
+    ``{column, kind, source, values, resolution_stats?}``. Indexed
+    positionally — same order as ``cell_ids`` from ``/points``. Cached
+    per (column, mv) on the TanStack Query side; same caching surface the
+    SPA already uses for ``/points``.
+    """
+    cfg = load_datastack_config(ds)
+    src = source_for(ds, cfg)
+    if src is None:
+        raise ApiError(
+            404,
+            "feature_explorer_disabled",
+            f"datastack {ds!r} does not enable the feature explorer",
+        )
+    try:
+        spec = src.resolve(embedding_id)
+    except KeyError as exc:
+        raise ApiError(404, "embedding_not_found", str(exc)) from exc
+
+    attached_decorations = _parse_csv(request.args.get("dec"))
+    df = load_embedding_frame(ds, spec, cache_ds=cfg.cache_alias or ds)
+
+    cell_id_ints = [int(v) for v in df[spec.id_column].tolist()]
+
+    block = _build_color_block(
+        ds=ds,
+        cfg=cfg,
+        spec=spec,
+        df=df,
+        color_by=column,
+        attached_decorations=attached_decorations,
+        cell_ids=cell_id_ints,
+        mat_version=request.args.get("mv"),
+    )
+    # The /column endpoint surfaces the same fields as the /points
+    # `color` block, just at the top level. No reshaping needed.
+    return jsonify(block)
 
 
 @bp.route("/<ds>/embeddings/<embedding_id>/knn", methods=["POST"])
@@ -475,14 +541,126 @@ def _numeric_list(s: pd.Series) -> list[float | None]:
     ]
 
 
-def _color_block(s: pd.Series, column: str, *, source: str) -> dict[str, Any]:
-    """Shape the color payload. Infers ``categorical`` vs ``numeric`` from
-    the column's dtype.
+def _build_color_block(
+    *,
+    ds: str,
+    cfg,
+    spec: EmbeddingSpec,
+    df: pd.DataFrame,
+    color_by: str,
+    attached_decorations: list[str],
+    cell_ids: list[int],
+    mat_version: str | None,
+) -> dict[str, Any]:
+    """Build the ``color``/``column`` payload, dispatching parquet vs
+    decoration based on the name shape.
 
-    ``bool`` dtype is treated as categorical (three states: True/False/None)
-    so the SPA can pick a 2-color palette for it. Strings, object, and
-    pandas Categorical all flow through the categorical branch with
-    null-preserving conversion.
+    Bare column → loaded from the cached frame, no CAVE call. ``table.column``
+    → joined through the resolver + decoration cache at ``mat_version``.
+
+    Errors raised as ``ApiError`` so they map cleanly to HTTP codes:
+
+    - 404 ``color_column_unknown``: bare column not present in the parquet.
+    - 422 ``decoration_table_not_attached``: ``table.column`` form but the
+      table isn't in ``?dec=``.
+    - 422 ``missing_mat_version``: decoration color without ``?mv=``.
+    """
+    if "." in color_by:
+        return _decoration_color_block(
+            ds=ds,
+            cfg=cfg,
+            color_by=color_by,
+            attached_decorations=attached_decorations,
+            cell_ids=cell_ids,
+            mat_version=mat_version,
+        )
+
+    if color_by not in df.columns:
+        raise ApiError(
+            404,
+            "color_column_unknown",
+            f"color_by={color_by!r} is not a column in this embedding "
+            f"(available: {sorted(df.columns)})",
+        )
+    return _series_color_block(df[color_by], color_by, source="parquet")
+
+
+def _decoration_color_block(
+    *,
+    ds: str,
+    cfg,
+    color_by: str,
+    attached_decorations: list[str],
+    cell_ids: list[int],
+    mat_version: str | None,
+) -> dict[str, Any]:
+    """Build the color block for a ``table.column`` color spec.
+
+    Routes the projection through ``join_decoration_column`` so the
+    cell_id → root_id resolution + decoration snapshot fetch is the same
+    machinery the rest of the app uses for connectivity decorations.
+    """
+    table, _, decoration_column = color_by.partition(".")
+    if table not in attached_decorations:
+        raise ApiError(
+            422,
+            "decoration_table_not_attached",
+            f"color_by={color_by!r} requires `{table}` in ?dec= "
+            f"(attached: {attached_decorations or '[]'})",
+        )
+    if mat_version is None:
+        raise ApiError(
+            422,
+            "missing_mat_version",
+            "decoration-sourced color requires ?mv=<int|live>",
+        )
+
+    try:
+        check_live_allowed(ds, mat_version)
+    except ValueError as exc:
+        raise ApiError(422, "live_mode_disallowed", str(exc)) from exc
+
+    # Build a client_factory so the decoration service's eventual
+    # background revalidation paths get a fresh client; the immediate
+    # call captures the request's auth context once.
+    auth_token = current_token()
+    dev_bypass = is_dev_bypass()
+    server_address = current_app.config["GLOBAL_SERVER_ADDRESS"]
+
+    def client_factory():
+        return request_client(
+            datastack_name=ds,
+            server_address=server_address,
+            auth_token=auth_token,
+            dev_bypass=dev_bypass,
+            materialize_version=mat_version,
+        )
+
+    try:
+        values, stats = join_decoration_column(
+            client_factory=client_factory,
+            cfg=cfg,
+            ds=ds,
+            mat_version=mat_version,
+            table=table,
+            column=decoration_column,
+            cell_ids=cell_ids,
+        )
+    except ValueError as exc:
+        raise ApiError(422, "lookup_unavailable", str(exc)) from exc
+    except Exception as exc:
+        raise ApiError(
+            502, "cave_upstream", f"{type(exc).__name__}: {exc}"
+        ) from exc
+
+    return _serialize_join_values(
+        values, color_by, source="decoration", resolution_stats=stats
+    )
+
+
+def _series_color_block(s: pd.Series, column: str, *, source: str) -> dict[str, Any]:
+    """Shape the color payload from a pandas Series. Infers categorical
+    vs numeric from dtype; bool treated as categorical (3 states).
     """
     if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
         return {
@@ -494,15 +672,59 @@ def _color_block(s: pd.Series, column: str, *, source: str) -> dict[str, Any]:
 
     values: list[Any] = []
     for v in s.tolist():
-        if v is None or v is pd.NA or (isinstance(v, float) and math.isnan(v)):
-            values.append(None)
-        elif isinstance(v, (str, bool, int)):
-            values.append(v)
-        else:
-            values.append(str(v))
+        values.append(_clean_categorical(v))
     return {
         "kind": "categorical",
         "column": column,
         "source": source,
         "values": values,
     }
+
+
+def _serialize_join_values(
+    values: list[Any], column: str, *, source: str, resolution_stats: dict[str, int]
+) -> dict[str, Any]:
+    """Shape the color payload from a list of joined values + stats.
+
+    The join already returned positional values; dtype isn't known at this
+    point so we infer from the first non-None entry. An all-null column
+    falls back to categorical (no semantically-meaningful color either way).
+    """
+    sample = next((v for v in values if v is not None), None)
+    is_numeric = isinstance(sample, (int, float)) and not isinstance(sample, bool)
+
+    if is_numeric:
+        cleaned = [
+            None if (v is None or (isinstance(v, float) and not math.isfinite(v))) else float(v)
+            for v in values
+        ]
+        kind = "numeric"
+    else:
+        cleaned = [_clean_categorical(v) for v in values]
+        kind = "categorical"
+
+    return {
+        "kind": kind,
+        "column": column,
+        "source": source,
+        "values": cleaned,
+        "resolution_stats": resolution_stats,
+    }
+
+
+def _clean_categorical(v: Any) -> Any:
+    """Categorical-value normalizer: null forms → None, primitives pass
+    through, everything else stringifies."""
+    if v is None or v is pd.NA or (isinstance(v, float) and math.isnan(v)):
+        return None
+    if isinstance(v, (str, bool, int)):
+        return v
+    return str(v)
+
+
+def _parse_csv(raw: str | None) -> list[str]:
+    """Parse ``?dec=foo,bar,baz`` → ``["foo", "bar", "baz"]``. Empty string
+    or missing → empty list."""
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
