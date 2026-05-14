@@ -50,14 +50,23 @@ export function useEmbeddingList(ds: string | null) {
 export interface EmbeddingPointsArgs {
   ds: string;
   embeddingId: string;
-  /** Color-by column. Bare name = parquet; `table.column` = decoration. */
+  /** Override the manifest's axis defaults. Bare name = parquet column,
+   *  `table.column` = decoration. Null/undefined → backend uses the
+   *  manifest's `spec.axes[0]` / `spec.axes[1]`. */
+  xColumn?: string | null;
+  yColumn?: string | null;
+  /** Color (hue) channel. Same shape; null → manifest default_color_by;
+   *  empty string → explicitly no color (the URL state distinguishes via
+   *  param presence). */
   colorBy?: string | null;
-  /** Attached decoration tables. Required when `colorBy` is `table.column`. */
+  /** Size channel. Server enforces numeric-only. Null = uniform size. */
+  sizeBy?: string | null;
+  /** Attached decoration tables. Required when any channel references a
+   *  `table.column` column. */
   decorationTables?: string[];
-  /** Materialization version. Required for decoration colors; ignored for
-   *  parquet-native colors but threaded through the queryKey so a `mv`
-   *  flip still re-fetches (cleaner than branching the key shape on
-   *  whether the color is decoration-sourced). */
+  /** Materialization version. Required when any channel is decoration-
+   *  sourced; threaded through the queryKey unconditionally so a mv flip
+   *  always invalidates. */
   matVersion?: number | "live" | null;
 }
 
@@ -67,7 +76,10 @@ export function useEmbeddingPoints(args: EmbeddingPointsArgs | null) {
         "embedding_points",
         args.ds,
         args.embeddingId,
+        args.xColumn ?? "",
+        args.yColumn ?? "",
         args.colorBy ?? "",
+        args.sizeBy ?? "",
         (args.decorationTables ?? []).join(","),
         args.matVersion ?? "",
       ]
@@ -77,7 +89,10 @@ export function useEmbeddingPoints(args: EmbeddingPointsArgs | null) {
     queryFn: () =>
       apiFetch<EmbeddingPointsResponse>(PATHS.points(args!.ds, args!.embeddingId), {
         query: {
+          x: args!.xColumn ?? undefined,
+          y: args!.yColumn ?? undefined,
           color_by: args!.colorBy ?? undefined,
+          size: args!.sizeBy ?? undefined,
           dec: args!.decorationTables?.length
             ? args!.decorationTables.join(",")
             : undefined,

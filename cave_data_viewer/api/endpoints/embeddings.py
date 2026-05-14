@@ -84,31 +84,32 @@ def points(ds: str, embedding_id: str):
 
     Query params
     ------------
-    color_by
-        Column to populate the ``color`` block. Defaults to
-        ``spec.default_color_by``. Two name forms accepted:
+    x, y
+        Columns to plot on the two axes. Defaults to the manifest's
+        ``axes`` field. Accept the same two name forms as ``color_by``:
 
-        - bare column (e.g. ``predicted_subclass``) — parquet-native;
-          served from the loaded frame.
+        - bare column (e.g. ``soma_depth_y``) — parquet-native.
         - ``table.column`` (e.g. ``cell_type_multifeature_combo.cell_type``)
-          — decoration-sourced; the table must appear in ``?dec=`` and
-          ``mv`` is required.
+          — decoration-sourced; same gating as decoration color.
 
-        When neither query nor default names a color column, the ``color``
-        block is omitted.
+        Letting x/y override means the explorer renders not just the
+        pre-computed UMAP, but any pair of features-vs-features (e.g.
+        ``soma_depth_y`` vs ``soma_area_um``) or even decoration columns
+        on an axis (categorical x renders as a category axis in plotly).
+    color_by
+        Same shape, populates the ``color`` block. Defaults to
+        ``spec.default_color_by``.
     dec
-        Comma-separated list of attached decoration tables (same meaning
-        and shape as ``/neuron``'s ``?dec=``). Tables outside this list
-        cannot supply color/filter values, so a typo doesn't silently
-        fail the user.
+        Comma-separated decoration tables attached to this request.
+        Tables outside this list cannot supply x/y/color values.
     mv
-        Materialization version (int or ``"live"``). Required for
-        decoration-sourced color; ignored when ``color_by`` is parquet-native.
+        Materialization version (int or ``"live"``). Required when any of
+        x/y/color_by names a decoration column.
 
     Response shape
     --------------
-    ``{cell_ids, x, y, color?}``. Parallel arrays — keeps the wire size
-    sub-MB even for 500k-row embeddings.
+    ``{cell_ids, x, y, color?}`` where each of x/y/color is a column block
+    (same shape: ``{kind, source, column, values, resolution_stats?}``).
     """
     cfg = load_datastack_config(ds)
     src = source_for(ds, cfg)
@@ -124,8 +125,12 @@ def points(ds: str, embedding_id: str):
     except KeyError as exc:
         raise ApiError(404, "embedding_not_found", str(exc)) from exc
 
+    x_col = request.args.get("x") or spec.axes[0]
+    y_col = request.args.get("y") or spec.axes[1]
     color_by = request.args.get("color_by") or spec.default_color_by
+    size_by = request.args.get("size")
     attached_decorations = _parse_csv(request.args.get("dec"))
+    mat_version = request.args.get("mv")
 
     df = load_embedding_frame(ds, spec, cache_ds=cfg.cache_alias or ds)
 
@@ -134,21 +139,48 @@ def points(ds: str, embedding_id: str):
 
     payload: dict[str, Any] = {
         "cell_ids": cell_id_strings,
-        "x": _numeric_list(df[spec.axes[0]]),
-        "y": _numeric_list(df[spec.axes[1]]),
+        "x": _build_column_block(
+            ds=ds, cfg=cfg, spec=spec, df=df, column=x_col,
+            attached_decorations=attached_decorations,
+            cell_ids=cell_id_ints, mat_version=mat_version,
+            error_code="x_column_unknown",
+        ),
+        "y": _build_column_block(
+            ds=ds, cfg=cfg, spec=spec, df=df, column=y_col,
+            attached_decorations=attached_decorations,
+            cell_ids=cell_id_ints, mat_version=mat_version,
+            error_code="y_column_unknown",
+        ),
     }
 
     if color_by:
-        payload["color"] = _build_color_block(
-            ds=ds,
-            cfg=cfg,
-            spec=spec,
-            df=df,
-            color_by=color_by,
+        payload["color"] = _build_column_block(
+            ds=ds, cfg=cfg, spec=spec, df=df, column=color_by,
             attached_decorations=attached_decorations,
-            cell_ids=cell_id_ints,
-            mat_version=request.args.get("mv"),
+            cell_ids=cell_id_ints, mat_version=mat_version,
+            error_code="color_column_unknown",
         )
+
+    if size_by:
+        # Size is meaningful only for numeric columns — the SPA's scatter
+        # maps the value range onto a marker-pixel range. Reject categorical
+        # / decoration-categorical inputs with a structured 422 so the SPA
+        # can fall back to uniform sizing without guessing.
+        size_block = _build_column_block(
+            ds=ds, cfg=cfg, spec=spec, df=df, column=size_by,
+            attached_decorations=attached_decorations,
+            cell_ids=cell_id_ints, mat_version=mat_version,
+            error_code="size_column_unknown",
+        )
+        if size_block["kind"] != "numeric":
+            raise ApiError(
+                422,
+                "size_column_not_numeric",
+                f"size={size_by!r} is {size_block['kind']!r}; only numeric "
+                "columns work for marker size",
+            )
+        payload["size"] = size_block
+
     return jsonify(payload)
 
 
@@ -192,18 +224,18 @@ def column(ds: str, embedding_id: str, column: str):
 
     cell_id_ints = [int(v) for v in df[spec.id_column].tolist()]
 
-    block = _build_color_block(
+    block = _build_column_block(
         ds=ds,
         cfg=cfg,
         spec=spec,
         df=df,
-        color_by=column,
+        column=column,
         attached_decorations=attached_decorations,
         cell_ids=cell_id_ints,
         mat_version=request.args.get("mv"),
     )
     # The /column endpoint surfaces the same fields as the /points
-    # `color` block, just at the top level. No reshaping needed.
+    # channel blocks (x/y/color/size), just at the top level. No reshaping.
     return jsonify(block)
 
 
@@ -541,78 +573,86 @@ def _numeric_list(s: pd.Series) -> list[float | None]:
     ]
 
 
-def _build_color_block(
+def _build_column_block(
     *,
     ds: str,
     cfg,
     spec: EmbeddingSpec,
     df: pd.DataFrame,
-    color_by: str,
+    column: str,
     attached_decorations: list[str],
     cell_ids: list[int],
     mat_version: str | None,
+    error_code: str = "column_unknown",
 ) -> dict[str, Any]:
-    """Build the ``color``/``column`` payload, dispatching parquet vs
-    decoration based on the name shape.
+    """Resolve one column to a ``{kind, source, column, values, ...}``
+    block, dispatching parquet vs decoration based on the name shape.
 
-    Bare column → loaded from the cached frame, no CAVE call. ``table.column``
+    Used by every channel that takes a column (x, y, color, size) — the
+    block shape is identical, only how the SPA *uses* the values differs.
+
+    Bare name → loaded from the cached frame, no CAVE call. ``table.column``
     → joined through the resolver + decoration cache at ``mat_version``.
+
+    ``error_code`` is passed-through into the structured 404 so callers
+    (one per channel) can distinguish "the x column was bad" from "the
+    color column was bad" in the SPA's error display.
 
     Errors raised as ``ApiError`` so they map cleanly to HTTP codes:
 
-    - 404 ``color_column_unknown``: bare column not present in the parquet.
+    - 404 ``<error_code>``: bare column not present in the parquet.
     - 422 ``decoration_table_not_attached``: ``table.column`` form but the
       table isn't in ``?dec=``.
-    - 422 ``missing_mat_version``: decoration color without ``?mv=``.
+    - 422 ``missing_mat_version``: decoration source without ``?mv=``.
     """
-    if "." in color_by:
-        return _decoration_color_block(
+    if "." in column:
+        return _decoration_column_block(
             ds=ds,
             cfg=cfg,
-            color_by=color_by,
+            column=column,
             attached_decorations=attached_decorations,
             cell_ids=cell_ids,
             mat_version=mat_version,
         )
 
-    if color_by not in df.columns:
+    if column not in df.columns:
         raise ApiError(
             404,
-            "color_column_unknown",
-            f"color_by={color_by!r} is not a column in this embedding "
+            error_code,
+            f"column={column!r} is not in this embedding "
             f"(available: {sorted(df.columns)})",
         )
-    return _series_color_block(df[color_by], color_by, source="parquet")
+    return _series_column_block(df[column], column, source="parquet")
 
 
-def _decoration_color_block(
+def _decoration_column_block(
     *,
     ds: str,
     cfg,
-    color_by: str,
+    column: str,
     attached_decorations: list[str],
     cell_ids: list[int],
     mat_version: str | None,
 ) -> dict[str, Any]:
-    """Build the color block for a ``table.column`` color spec.
+    """Build a column block for a ``table.column`` spec.
 
     Routes the projection through ``join_decoration_column`` so the
     cell_id → root_id resolution + decoration snapshot fetch is the same
     machinery the rest of the app uses for connectivity decorations.
     """
-    table, _, decoration_column = color_by.partition(".")
+    table, _, decoration_column = column.partition(".")
     if table not in attached_decorations:
         raise ApiError(
             422,
             "decoration_table_not_attached",
-            f"color_by={color_by!r} requires `{table}` in ?dec= "
+            f"column={column!r} requires `{table}` in ?dec= "
             f"(attached: {attached_decorations or '[]'})",
         )
     if mat_version is None:
         raise ApiError(
             422,
             "missing_mat_version",
-            "decoration-sourced color requires ?mv=<int|live>",
+            "decoration-sourced column requires ?mv=<int|live>",
         )
 
     try:
@@ -654,11 +694,11 @@ def _decoration_color_block(
         ) from exc
 
     return _serialize_join_values(
-        values, color_by, source="decoration", resolution_stats=stats
+        values, column, source="decoration", resolution_stats=stats
     )
 
 
-def _series_color_block(s: pd.Series, column: str, *, source: str) -> dict[str, Any]:
+def _series_column_block(s: pd.Series, column: str, *, source: str) -> dict[str, Any]:
     """Shape the color payload from a pandas Series. Infers categorical
     vs numeric from dtype; bool treated as categorical (3 states).
     """

@@ -5,7 +5,7 @@ import {
   useEmbeddingPoints,
 } from "../../api/embeddings";
 import { parseMatVersion, useSetUrlParams, useUrlParam } from "../../hooks/useUrlState";
-import { ColorByPicker } from "./ColorByPicker";
+import { ChannelPicker, type ChannelDecorationColumn } from "./ChannelPicker";
 import { DecorationPicker } from "./DecorationPicker";
 import { EmbeddingPicker } from "./EmbeddingPicker";
 import { EmbeddingScatter } from "./EmbeddingScatter";
@@ -37,7 +37,13 @@ export function FeatureExplorer() {
   const [ds] = useUrlParam("ds");
   const [mvRaw] = useUrlParam("mv");
   const [emb, setEmb] = useUrlParamSafe("emb");
+  // Channel pickers: each writes the user's override or null when the
+  // manifest default should stand. URL params are short to keep shared
+  // links readable: x / y / color / size.
+  const [xColumn, setXColumn] = useUrlParamSafe("x");
+  const [yColumn, setYColumn] = useUrlParamSafe("y");
   const [color, setColor] = useUrlParamSafe("color");
+  const [sizeColumn, setSizeColumn] = useUrlParamSafe("size");
   const [cell, setCell] = useUrlParamSafe("cell");
   const [neighborsRaw] = useUrlParam("neighbors");
   const [selRaw] = useUrlParam("sel");
@@ -76,6 +82,18 @@ export function FeatureExplorer() {
     ds,
     matVersion,
     decorationTables,
+  );
+
+  // ChannelPicker takes the discovered columns as {label, value, kind}.
+  // Memo to avoid re-deriving on every render — the four pickers all
+  // read the same list.
+  const channelDecorationColumns: ChannelDecorationColumn[] = useMemo(
+    () => decorationColumns.map((dc) => ({
+      label: `${dc.table}.${dc.column}`,
+      value: `${dc.table}.${dc.column}`,
+      kind: dc.kind,
+    })),
+    [decorationColumns],
   );
 
   // First-mount: pick the first embedding if none in the URL. Avoids a
@@ -123,7 +141,10 @@ export function FeatureExplorer() {
       ? {
           ds,
           embeddingId: selected.id,
+          xColumn,
+          yColumn,
           colorBy: effectiveColor,
+          sizeBy: sizeColumn,
           decorationTables,
           matVersion,
         }
@@ -175,15 +196,39 @@ export function FeatureExplorer() {
           attached={decorationTables}
           onChange={(next) => setUrl({ dec: next.length ? next.join(",") : null })}
         />
-        <ColorByPicker
+        <ChannelPicker
+          label="X axis"
           embedding={selected}
+          decorationColumns={channelDecorationColumns}
+          value={xColumn}
+          onChange={setXColumn}
+          defaultColumn={selected.axes[0]}
+        />
+        <ChannelPicker
+          label="Y axis"
+          embedding={selected}
+          decorationColumns={channelDecorationColumns}
+          value={yColumn}
+          onChange={setYColumn}
+          defaultColumn={selected.axes[1]}
+        />
+        <ChannelPicker
+          label="Color"
+          embedding={selected}
+          decorationColumns={channelDecorationColumns}
           value={color}
           onChange={setColor}
-          decorationColumns={decorationColumns.map((dc) => ({
-            label: `${dc.table}.${dc.column}`,
-            value: `${dc.table}.${dc.column}`,
-            source: "decoration",
-          }))}
+          defaultColumn={selected.default_color_by}
+        />
+        <ChannelPicker
+          label="Size"
+          embedding={selected}
+          decorationColumns={channelDecorationColumns}
+          value={sizeColumn}
+          onChange={setSizeColumn}
+          numericOnly
+          noneEnabled
+          placeholderLabel="(uniform)"
         />
         {points.data?.color?.resolution_stats && (
           <ResolutionStatsBanner stats={points.data.color.resolution_stats} />
@@ -225,8 +270,6 @@ export function FeatureExplorer() {
             neighborCellIds={neighborCellIds}
             brushCellIds={brushCellIds}
             filterMask={filterMask?.passing ?? null}
-            xLabel={selected.axes[0]}
-            yLabel={selected.axes[1]}
             onCellClick={(cellId) => setCell(cellId)}
             onSelected={handleLasso}
           />

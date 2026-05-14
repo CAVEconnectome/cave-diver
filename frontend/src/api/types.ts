@@ -386,10 +386,14 @@ export interface EmbeddingListResponse {
   embeddings?: EmbeddingListItem[];
 }
 
-/** Color block carried on `/points` and at the top level of `/column`. Two
- *  flavours: `parquet` (from the loaded frame, no CAVE round-trip) and
- *  `decoration` (joined through the cell_id->root_id resolver at `mv`). */
-export interface EmbeddingColorBlock {
+/** One column resolved into a positional values array, plus the metadata
+ *  the SPA needs to render it. Same shape across every channel the
+ *  scatter binds — x, y, color, size all carry this block. Two
+ *  ``source`` flavours: ``parquet`` (from the loaded frame, no CAVE
+ *  round-trip) and ``decoration`` (joined through the cell_id→root_id
+ *  resolver at ``mv``).
+ */
+export interface EmbeddingColumnBlock {
   kind: "categorical" | "numeric";
   source: "parquet" | "decoration";
   column: string;
@@ -406,19 +410,30 @@ export interface EmbeddingColorBlock {
   };
 }
 
+/** Back-compat alias. Lots of existing call sites refer to this name —
+ *  keep it pointing at the same shape so renames don't ripple. */
+export type EmbeddingColorBlock = EmbeddingColumnBlock;
+
 export interface EmbeddingPointsResponse {
   /** Stringified cell_ids — project-wide JSON convention even though
    *  cell_ids fit in JS Number precision (consistency with root_ids). */
   cell_ids: string[];
-  x: Array<number | null>;
-  y: Array<number | null>;
-  color?: EmbeddingColorBlock;
+  /** Axis columns. Default to the manifest's `axes` but the SPA can
+   *  override via `?x=` / `?y=` so the user can plot any pair of
+   *  features against each other (soma_depth vs soma_area, etc.). */
+  x: EmbeddingColumnBlock;
+  y: EmbeddingColumnBlock;
+  /** Optional color (hue) channel — same column resolution dispatch. */
+  color?: EmbeddingColumnBlock;
+  /** Optional size channel. Server-side enforced to be numeric. The SPA
+   *  scales the value range onto a fixed marker-pixel range. */
+  size?: EmbeddingColumnBlock;
 }
 
 /** /column endpoint surfaces a single positional column (parquet or
- *  decoration). Shape mirrors `EmbeddingColorBlock` — same payload at the
- *  top level rather than nested under `color`. */
-export type EmbeddingColumnResponse = EmbeddingColorBlock;
+ *  decoration). Shape mirrors `EmbeddingColumnBlock` — same payload at the
+ *  top level rather than nested under a channel name. */
+export type EmbeddingColumnResponse = EmbeddingColumnBlock;
 
 export interface EmbeddingKnnNeighbor {
   cell_id: string;

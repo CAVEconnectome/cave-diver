@@ -36,6 +36,15 @@ const BRUSH_COLOR = "#9D4EDD";       // purple
 const OVERLAY_BASE_SIZE = 8;
 const FOCUS_MARKER_SIZE = 14;
 
+// Size-channel marker-pixel range. The size column's value range is
+// linearly remapped onto these bounds so any numeric feature produces a
+// readable scatter regardless of its native units (microns, areas, counts).
+// Values outside the remapped range (null / non-finite) fall back to a
+// medium-default; that keeps the legend consistent without dropping points.
+const SIZE_MIN_PX = 3;
+const SIZE_MAX_PX = 14;
+const SIZE_DEFAULT_PX = 4;
+
 interface Props {
   /** /points response. Caller passes `null`/`undefined` while loading or
    *  before a datastack is chosen; the component renders an empty plot. */
@@ -112,19 +121,28 @@ export function EmbeddingScatter({
     [data, focusCellId, neighborCellIds, brushCellIds, filterMask],
   );
 
+  // Axis labels follow the column actually rendered (which may differ
+  // from the manifest's default `axes` once the user picks an override).
+  // Prop fallback covers the loading-state render where `data` is still
+  // null so layout still gets stable bounds.
+  const xAxisLabel = data?.x.column ?? xLabel ?? "";
+  const yAxisLabel = data?.y.column ?? yLabel ?? "";
+
   const layout = useMemo(
     () => ({
       autosize: true,
       // The colorbar in the numeric branch eats some horizontal real
       // estate; using `automargin` lets it size without us tuning by hand.
-      xaxis: { title: { text: xLabel ?? "" }, zeroline: false, automargin: true },
-      yaxis: { title: { text: yLabel ?? "" }, zeroline: false, automargin: true },
+      xaxis: { title: { text: xAxisLabel }, zeroline: false, automargin: true },
+      yaxis: { title: { text: yAxisLabel }, zeroline: false, automargin: true },
       margin: { l: 50, r: 20, t: 20, b: 50 },
       dragmode: "lasso" as const,
       hovermode: "closest" as const,
       // uirevision keeps zoom/pan state when only the data updates — so
-      // re-coloring or re-fetching doesn't snap back to fitView.
-      uirevision: "embedding-scatter",
+      // re-coloring or re-fetching doesn't snap back to fitView. Include
+      // the axes in the key so switching from UMAP to soma-depth-vs-area
+      // DOES reset zoom (the new axes have entirely different ranges).
+      uirevision: `embedding-scatter-${xAxisLabel}-${yAxisLabel}`,
       // Categorical traces render in the legend (one entry per category);
       // numeric / no-color leaves the legend empty. Showing it
       // unconditionally keeps the plot's bounding box stable across
@@ -132,7 +150,7 @@ export function EmbeddingScatter({
       showlegend: true,
       legend: { itemsizing: "constant" as const, font: { size: 11 } },
     }),
-    [xLabel, yLabel],
+    [xAxisLabel, yAxisLabel],
   );
 
   const handleClick = useCallback(
@@ -182,6 +200,12 @@ export function EmbeddingScatter({
 
 // ---- trace construction ---------------------------------------------------
 
+/** Plotly-friendly cell value type. Numeric axes ship floats; categorical
+ *  axes ship strings/bools; both surface here so callers don't have to
+ *  branch on dtype. Plotly's axis-type inference (`xaxis.type: '-'`)
+ *  handles the rendering. */
+type ChannelValue = number | string | boolean | null;
+
 interface OverlayInputs {
   focusCellId?: string | null;
   neighborCellIds?: string[];
@@ -197,13 +221,52 @@ function buildTraces(
   overlay: OverlayInputs,
 ): unknown[] {
   if (!data) return [];
-  const baseTraces = buildBaseTraces(data, overlay.filterMask ?? null);
-  const overlayTraces = buildOverlayTraces(data.cell_ids, data.x, data.y, overlay);
+  // x/y can be either numeric or categorical; plotly's axis-type
+  // inference (`type: '-'`) handles both transparently. Typed widely
+  // here so we don't need a branch per dtype downstream.
+  const xVals = data.x.values as ChannelValue[];
+  const yVals = data.y.values as ChannelValue[];
+  // Precompute the size-pixel array once; null/missing falls back to a
+  // medium-default so we never ship undefined into plotly.
+  const sizePx = data.size
+    ? scaleSizeArray(data.size.values as Array<number | null>)
+    : null;
+  const baseTraces = buildBaseTraces(
+    data, xVals, yVals, sizePx, overlay.filterMask ?? null,
+  );
+  const overlayTraces = buildOverlayTraces(
+    data.cell_ids, xVals, yVals, overlay,
+  );
   return [...baseTraces, ...overlayTraces];
+}
+
+function scaleSizeArray(values: Array<number | null>): number[] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (typeof v === "number" && Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+    // Degenerate column (all-null or zero-variance): everything renders
+    // at the default size; the user just doesn't see a size mapping.
+    return values.map(() => SIZE_DEFAULT_PX);
+  }
+  const range = max - min;
+  return values.map((v) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return SIZE_DEFAULT_PX;
+    const frac = (v - min) / range;
+    return SIZE_MIN_PX + frac * (SIZE_MAX_PX - SIZE_MIN_PX);
+  });
 }
 
 function buildBaseTraces(
   data: EmbeddingPointsResponse,
+  xVals: ChannelValue[],
+  yVals: ChannelValue[],
+  sizePx: number[] | null,
   filterMask: boolean[] | null,
 ): unknown[] {
   // Apply the filter mask by partitioning indices into "passing" (full
@@ -211,9 +274,14 @@ function buildBaseTraces(
   // traces per styled-set rather than one because plotly's scattergl
   // backend doesn't honor per-point marker.opacity — uniform opacity per
   // trace is the WebGL-friendly path.
-  const { cell_ids, x, y, color } = data;
+  const { cell_ids, color } = data;
   const passing = filterMask ? indexWhere(filterMask, true) : null;
   const failing = filterMask ? indexWhere(filterMask, false) : [];
+
+  // Pull a marker-size for each row position (uniform fallback when no
+  // size channel). Returned as a sub-array indexed by row-position.
+  const sizeFor = (indices: number[]) =>
+    sizePx ? indices.map((i) => sizePx[i]) : 4;
 
   const traces: unknown[] = [];
 
@@ -223,8 +291,8 @@ function buildBaseTraces(
     traces.push({
       type: "scattergl",
       mode: "markers",
-      x: failing.map((i) => x[i]),
-      y: failing.map((i) => y[i]),
+      x: failing.map((i) => xVals[i]),
+      y: failing.map((i) => yVals[i]),
       customdata: failing.map((i) => cell_ids[i]),
       marker: { size: 3, opacity: DIMMED_OPACITY, color: NULL_COLOR },
       hovertemplate: "(filtered) cell %{customdata}<extra></extra>",
@@ -237,10 +305,14 @@ function buildBaseTraces(
     traces.push({
       type: "scattergl",
       mode: "markers",
-      x: passing ? indices.map((i) => x[i]) : x,
-      y: passing ? indices.map((i) => y[i]) : y,
-      customdata: passing ? indices.map((i) => cell_ids[i]) : cell_ids,
-      marker: { size: 4, opacity: NORMAL_OPACITY, color: NULL_COLOR },
+      x: indices.map((i) => xVals[i]),
+      y: indices.map((i) => yVals[i]),
+      customdata: indices.map((i) => cell_ids[i]),
+      marker: {
+        size: sizeFor(indices),
+        opacity: NORMAL_OPACITY,
+        color: NULL_COLOR,
+      },
       hovertemplate: "cell %{customdata}<extra></extra>",
       showlegend: false,
     });
@@ -253,11 +325,11 @@ function buildBaseTraces(
     traces.push({
       type: "scattergl",
       mode: "markers",
-      x: indices.map((i) => x[i]),
-      y: indices.map((i) => y[i]),
+      x: indices.map((i) => xVals[i]),
+      y: indices.map((i) => yVals[i]),
       customdata: indices.map((i) => cell_ids[i]),
       marker: {
-        size: 4,
+        size: sizeFor(indices),
         opacity: NORMAL_OPACITY,
         color: indices.map((i) => values[i]),
         colorscale: NUMERIC_COLORSCALE,
@@ -295,11 +367,11 @@ function buildBaseTraces(
     traces.push({
       type: "scattergl",
       mode: "markers",
-      x: indices.map((i) => x[i]),
-      y: indices.map((i) => y[i]),
+      x: indices.map((i) => xVals[i]),
+      y: indices.map((i) => yVals[i]),
       customdata: indices.map((i) => cell_ids[i]),
       name: labelFor[key],
-      marker: { size: 4, opacity: NORMAL_OPACITY, color: c },
+      marker: { size: sizeFor(indices), opacity: NORMAL_OPACITY, color: c },
       hovertemplate: `cell %{customdata}<br>${color.column}: ${labelFor[key]}<extra></extra>`,
       showlegend: true,
     });
@@ -323,8 +395,8 @@ function indexWhere(mask: boolean[], value: boolean): number[] {
  */
 function buildOverlayTraces(
   cellIds: string[],
-  x: Array<number | null>,
-  y: Array<number | null>,
+  x: Array<number | null | string | boolean>,
+  y: Array<number | null | string | boolean>,
   overlay: OverlayInputs,
 ): unknown[] {
   const indexById = new Map<string, number>();
@@ -374,12 +446,12 @@ interface OverlayStyle {
 function _subsetTrace(
   ids: string[],
   indexById: Map<string, number>,
-  x: Array<number | null>,
-  y: Array<number | null>,
+  x: Array<ChannelValue>,
+  y: Array<ChannelValue>,
   style: OverlayStyle,
 ): unknown {
-  const subX: Array<number | null> = [];
-  const subY: Array<number | null> = [];
+  const subX: Array<ChannelValue> = [];
+  const subY: Array<ChannelValue> = [];
   for (const id of ids) {
     const i = indexById.get(id)!;
     subX.push(x[i]);
