@@ -28,6 +28,7 @@ from ..errors import ApiError
 from ..services.datastack_config import load_datastack_config
 from ..services.embeddings import (
     EmbeddingSpec,
+    get_index,
     load_embedding_frame,
     source_for,
 )
@@ -135,6 +136,114 @@ def points(ds: str, embedding_id: str):
     if color_by:
         payload["color"] = _color_block(df[color_by], color_by, source="parquet")
     return jsonify(payload)
+
+
+@bp.route("/<ds>/embeddings/<embedding_id>/knn", methods=["POST"])
+@auth_required
+def knn(ds: str, embedding_id: str):
+    """k-nearest-neighbor query in feature space.
+
+    Request body
+    ------------
+    ``{cell_id, k?, feature_columns?}``
+
+    - ``cell_id``: the query cell (int or string, both accepted).
+    - ``k``: number of neighbors to return. Defaults to
+      ``manifest.knn.default_k``; clamped to ``manifest.knn.max_k``.
+    - ``feature_columns``: optional override of the kNN feature subset.
+      When omitted, falls back to ``spec.feature_columns`` from the
+      manifest, then to "all non-axis non-audit numerics" auto-derived
+      from the parquet.
+
+    For v1 this endpoint accepts cell_id only. ``root_id`` input (with
+    reverse resolution via ``services/cell_id.py``) lands in the next
+    task and currently returns 501.
+
+    Response
+    --------
+    ``{query_cell_id, neighbors: [{cell_id, distance}, ...]}``. Both ids
+    are stringified per project convention.
+    """
+    cfg = load_datastack_config(ds)
+    src = source_for(ds, cfg)
+    if src is None:
+        raise ApiError(
+            404,
+            "feature_explorer_disabled",
+            f"datastack {ds!r} does not enable the feature explorer",
+        )
+
+    try:
+        spec = src.resolve(embedding_id)
+    except KeyError as exc:
+        raise ApiError(404, "embedding_not_found", str(exc)) from exc
+
+    body = request.get_json(silent=True) or {}
+
+    if "root_id" in body and "cell_id" not in body:
+        raise ApiError(
+            501,
+            "root_id_knn_not_implemented",
+            "root_id input is a follow-up task; pass cell_id for now",
+        )
+
+    if "cell_id" not in body:
+        raise ApiError(
+            422, "missing_cell_id", "request body must include `cell_id`"
+        )
+
+    try:
+        cell_id = int(body["cell_id"])
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            422,
+            "invalid_cell_id",
+            f"cell_id must be an integer or numeric string, got {body['cell_id']!r}",
+        ) from exc
+
+    manifest = src.list()
+    requested_k = body.get("k", manifest.knn.default_k)
+    try:
+        requested_k = int(requested_k)
+    except (TypeError, ValueError) as exc:
+        raise ApiError(
+            422, "invalid_k", f"k must be an integer, got {requested_k!r}"
+        ) from exc
+    k = max(1, min(requested_k, manifest.knn.max_k))
+
+    feature_columns = body.get("feature_columns")  # None -> spec defaults
+    if feature_columns is not None and not isinstance(feature_columns, list):
+        raise ApiError(
+            422,
+            "invalid_feature_columns",
+            "feature_columns must be a list of column names",
+        )
+
+    try:
+        index = get_index(
+            ds,
+            spec,
+            feature_columns=feature_columns,
+            standardize=manifest.knn.standardize,
+            cache_ds=cfg.cache_alias or ds,
+        )
+    except ValueError as exc:
+        raise ApiError(500, "index_build_failed", str(exc)) from exc
+
+    try:
+        neighbors = index.query(cell_id, k)
+    except KeyError as exc:
+        raise ApiError(404, "cell_id_not_in_index", str(exc)) from exc
+
+    return jsonify(
+        {
+            "query_cell_id": str(cell_id),
+            "neighbors": [
+                {"cell_id": str(cid), "distance": d}
+                for cid, d in neighbors
+            ],
+        }
+    )
 
 
 # -- internals ----------------------------------------------------------------

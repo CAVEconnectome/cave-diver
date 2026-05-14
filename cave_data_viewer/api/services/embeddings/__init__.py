@@ -18,6 +18,7 @@ service code should depend on the ``EmbeddingSource`` Protocol and the
 behavior, URI fetcher, and parquet reader are implementation details.
 """
 
+from .knn import EmbeddingIndex, build_index, get_index
 from .loader import load_embedding_frame
 from .manifest import (
     EmbeddingAudit,
@@ -47,4 +48,8 @@ __all__ = [
     "get_manifest",
     # Parquet loader.
     "load_embedding_frame",
+    # kNN index.
+    "EmbeddingIndex",
+    "build_index",
+    "get_index",
 ]

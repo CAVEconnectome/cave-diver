@@ -222,6 +222,16 @@ def _init_l2_immutable_caches(app: Flask) -> None:
         maxsize=64,
     )
 
+    # kNN index cache. L1-only, immutable: a (ds, embedding_id,
+    # feature_subset) triple uniquely determines a KDTree (the parquet at
+    # a given URI is fixed, the feature subset is the digest). KDTree
+    # plus the scaling vectors aren't worth serializing to L2 — the
+    # parquet itself is L2-backed via dcv_embedding_frame_cache, and
+    # rebuilding from a cached frame is fast (~10-50ms for 100k cells).
+    app.extensions["dcv_embedding_index_cache"] = SwrCache(
+        soft_ttl=0, hard_ttl=0, maxsize=32, immutable=True,
+    )
+
 
 def _register_spa(app: Flask) -> None:
     """Serve the built React SPA for non-API routes when the build output
