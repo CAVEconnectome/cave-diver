@@ -234,20 +234,35 @@ export function UniverseScatter({
   if (measuredHeight > 0) heightForFitRef.current = measuredHeight;
   else if (height) heightForFitRef.current = height;
 
-  // Auto-fit policy: fit once per distinct axesKey, *not* every time
-  // `query.data` becomes truthy. TanStack Query's queryKey changes
-  // when channel bindings change (color, size, etc.) — that briefly
-  // flips data to undefined and back as the refetch lands, which used
-  // to retrigger the fit and snap the user's pan/zoom to default on
-  // every channel change. lastFittedAxesRef gates the fit so we only
-  // re-fit on a real axis swap.
+  // Auto-fit policy.
+  //
+  // We want to re-fit when:
+  //   - data first lands
+  //   - the axes change (different coordinate space — channel swap)
+  //   - the container resizes BEFORE the user has interacted with the
+  //     view (initial layout settling: flex distribution can give a
+  //     small height on first paint, then grow once siblings finish
+  //     measuring)
+  //
+  // We want to NOT re-fit on:
+  //   - channel changes (color, size, dec, mat_version) — they refetch
+  //     and briefly flip `query.data` to undefined, but the user's
+  //     pan/zoom should survive
+  //   - container resize AFTER user interaction (don't yank the view)
+  //
+  // Implementation: track `hasUserInteractedRef` (set when the user
+  // pans/zooms via deck.gl's interactionState). The effect re-fits
+  // freely until that flag flips; afterwards, only an axes change
+  // re-fits.
+  const hasUserInteractedRef = useRef(false);
   const lastFittedAxesRef = useRef<string | null>(null);
   useEffect(() => {
     if (!query.data) return;
-    if (measuredHeight <= 0) return; // wait for first measurement
-    if (lastFittedAxesRef.current === axesKey) return; // already fitted this axis pair
+    if (measuredHeight <= 0) return;
+    const axesChanged = lastFittedAxesRef.current !== axesKey;
+    if (hasUserInteractedRef.current && !axesChanged) return;
     lastFittedAxesRef.current = axesKey;
-    setViewState(unitSquareViewState(heightForFitRef.current));
+    setViewState(unitSquareViewState(measuredHeight));
   }, [axesKey, query.data, measuredHeight]);
 
   const fitView = useCallback(() => {
@@ -446,7 +461,19 @@ export function UniverseScatter({
         views={new OrthographicView({ id: "ortho" })}
         viewState={viewState ?? undefined}
         controller={tool === "pan"}
-        onViewStateChange={({ viewState: next }) => {
+        onViewStateChange={({ viewState: next, interactionState }) => {
+          // Any user-driven change (drag, pinch, scroll-zoom) carries
+          // a non-empty `interactionState`. Programmatic
+          // setViewState() calls leave it empty / falsy. Use that to
+          // mark "the user has taken the wheel" so subsequent
+          // container resizes don't yank the view back to auto-fit.
+          if (
+            interactionState &&
+            typeof interactionState === "object" &&
+            Object.keys(interactionState).length > 0
+          ) {
+            hasUserInteractedRef.current = true;
+          }
           setViewState({
             target: (next as { target: [number, number, number] }).target ?? [0, 0, 0],
             zoom: (next as { zoom: number }).zoom ?? FOCUSED_VIEW_ZOOM,

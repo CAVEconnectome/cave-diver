@@ -177,7 +177,7 @@ function NumericHistogram({
     [values, cellIds, highlightedCellIds],
   );
 
-  if (!bins || bins.binCounts.length === 0) return null;
+  if (!bins || bins.universeDensity.length === 0) return null;
 
   const width = 240;
   const height = 60;
@@ -185,8 +185,20 @@ function NumericHistogram({
   const padBottom = 14;
   const innerW = width - padLeft;
   const innerH = height - padBottom;
-  const maxCount = Math.max(1, ...bins.binCounts);
-  const barW = innerW / bins.binCounts.length;
+  // Both distributions are area-normalized to sum 1; the y-axis is
+  // shared and scales to the larger of the two distributions' max
+  // bin. Result: subset bars and universe bars are visually
+  // comparable as *shapes* — the user can see a distribution shift
+  // even when the subset is 444 cells out of 94k. Absolute counts
+  // are shown above the histogram in the "N of M cells in scope"
+  // line.
+  const maxDensity = Math.max(
+    1e-9,
+    ...bins.universeDensity,
+    ...bins.highlightDensity,
+  );
+  const barW = innerW / bins.universeDensity.length;
+  const hasHighlight = bins.highlightDensity.some((d) => d > 0);
 
   return (
     <div className="summary-histogram" title={column}>
@@ -196,10 +208,10 @@ function NumericHistogram({
         className="summary-histogram-svg"
         preserveAspectRatio="none"
       >
-        {bins.binCounts.map((u, i) => {
-          const h = (u / maxCount) * innerH;
-          const hl = bins.highlightCounts[i];
-          const hlH = (hl / maxCount) * innerH;
+        {bins.universeDensity.map((u, i) => {
+          const h = (u / maxDensity) * innerH;
+          const hl = bins.highlightDensity[i];
+          const hlH = (hl / maxDensity) * innerH;
           const x = padLeft + i * barW;
           return (
             <g key={i}>
@@ -211,14 +223,17 @@ function NumericHistogram({
                 height={h}
                 fill="rgba(0, 0, 0, 0.18)"
               />
-              {/* Highlight overlay (in the channel color). */}
-              {hl > 0 && (
+              {/* Highlight overlay (in the channel color). Density-
+                  normalized so a small subset is still visible at
+                  comparable scale to the universe distribution. */}
+              {hasHighlight && hl > 0 && (
                 <rect
                   x={x + 0.5}
                   y={innerH - hlH}
                   width={Math.max(0, barW - 1)}
                   height={hlH}
                   fill={color}
+                  opacity={0.8}
                 />
               )}
             </g>
@@ -250,8 +265,13 @@ function NumericHistogram({
 }
 
 interface HistogramData {
-  binCounts: number[];
-  highlightCounts: number[];
+  /** Universe distribution density (each value = bin count /
+   *  universe total; sums to 1). */
+  universeDensity: number[];
+  /** Highlight distribution density (each value = bin count /
+   *  highlight total; sums to 1 when the highlight is non-empty,
+   *  else all zeros). */
+  highlightDensity: number[];
   binMin: number;
   binMax: number;
 }
@@ -271,40 +291,51 @@ function buildHistogram(
     if (v > mx) mx = v;
   }
   if (!Number.isFinite(mn)) return null;
+
+  const binsLen = mx === mn ? 1 : nBins;
+  const binCounts = new Array<number>(binsLen).fill(0);
+  const highlightCounts = new Array<number>(binsLen).fill(0);
+  let universeTotal = 0;
+  let highlightTotal = 0;
+
   if (mx === mn) {
-    // Constant column — collapse to one bin so the panel renders without
-    // a divide-by-zero. Useful smoke test for "histogram never empty."
-    const universe = values.filter((v) => v !== null && Number.isFinite(v as number)).length;
-    let hi = 0;
-    if (highlight) {
-      for (let i = 0; i < values.length; i++) {
-        const v = values[i];
-        if (v === null || !Number.isFinite(v)) continue;
-        if (highlight.has(cellIds[i])) hi += 1;
+    // Constant column — single bin so the panel renders without a
+    // divide-by-zero downstream.
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v === null || v === undefined || !Number.isFinite(v)) continue;
+      binCounts[0] += 1;
+      universeTotal += 1;
+      if (highlight && highlight.has(cellIds[i])) {
+        highlightCounts[0] += 1;
+        highlightTotal += 1;
       }
     }
-    return {
-      binCounts: [universe],
-      highlightCounts: [hi],
-      binMin: mn,
-      binMax: mx,
-    };
-  }
-  const span = mx - mn;
-  const binCounts = new Array<number>(nBins).fill(0);
-  const highlightCounts = new Array<number>(nBins).fill(0);
-  // Pass 2: bin every cell.
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (v === null || v === undefined || !Number.isFinite(v)) continue;
-    let bin = Math.floor(((v - mn) / span) * nBins);
-    if (bin >= nBins) bin = nBins - 1; // clamp the max-value point
-    binCounts[bin] += 1;
-    if (highlight && highlight.has(cellIds[i])) {
-      highlightCounts[bin] += 1;
+  } else {
+    const span = mx - mn;
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v === null || v === undefined || !Number.isFinite(v)) continue;
+      let bin = Math.floor(((v - mn) / span) * nBins);
+      if (bin >= nBins) bin = nBins - 1; // clamp the max-value point
+      binCounts[bin] += 1;
+      universeTotal += 1;
+      if (highlight && highlight.has(cellIds[i])) {
+        highlightCounts[bin] += 1;
+        highlightTotal += 1;
+      }
     }
   }
-  return { binCounts, highlightCounts, binMin: mn, binMax: mx };
+
+  // Normalize to densities (each distribution sums to 1) so a small
+  // subset's shape is visually comparable to the full universe's.
+  const universeDensity = binCounts.map((c) =>
+    universeTotal > 0 ? c / universeTotal : 0,
+  );
+  const highlightDensity = highlightCounts.map((c) =>
+    highlightTotal > 0 ? c / highlightTotal : 0,
+  );
+  return { universeDensity, highlightDensity, binMin: mn, binMax: mx };
 }
 
 function formatTick(n: number): string {
