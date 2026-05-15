@@ -233,8 +233,7 @@ export function UniverseScatter({
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
-      const h = entries[0].contentRect.height;
-      setMeasuredHeight(h);
+      setMeasuredHeight(entries[0].contentRect.height);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -285,7 +284,8 @@ export function UniverseScatter({
     if (!query.data) return;
     if (measuredHeight <= 0) return;
     const axesChanged = lastFittedAxesRef.current !== axesKey;
-    if (hasUserInteractedRef.current && !axesChanged) return;
+    const shouldFit = axesChanged || !hasUserInteractedRef.current;
+    if (!shouldFit) return;
     lastFittedAxesRef.current = axesKey;
     setViewState(unitSquareViewState(measuredHeight));
   }, [axesKey, query.data, measuredHeight]);
@@ -448,27 +448,20 @@ export function UniverseScatter({
     return { lines, px: hovered.px, py: hovered.py };
   }, [hovered, query.data]);
 
-  if (query.isLoading) {
-    return (
-      <div className="universe-scatter loading" style={{ height }}>
-        Loading universe scatter…
-      </div>
-    );
-  }
-  if (query.isError) {
-    return (
-      <div className="universe-scatter error" style={{ height }}>
-        Failed to load scatter: {String(query.error)}
-      </div>
-    );
-  }
-  if (!query.data || query.data.n_cells === 0) {
-    return (
-      <div className="universe-scatter empty" style={{ height }}>
-        No cells in this embedding.
-      </div>
-    );
-  }
+  // Single outer container so the ResizeObserver-bearing ref is
+  // always attached — earlier conditional-return paths rendered
+  // separate <div>s without the ref, so RO observed nothing and
+  // measuredHeight stayed 0 (the bug behind "initial zoom is wrong;
+  // Fit works"). Inner placeholders are overlay divs rendered on top
+  // of the (possibly-empty) DeckGL canvas.
+  const placeholder = query.isLoading
+    ? "Loading universe scatter…"
+    : query.isError
+      ? `Failed to load scatter: ${String(query.error)}`
+      : !query.data || query.data.n_cells === 0
+        ? "No cells in this embedding."
+        : null;
+  const hasData = !!query.data && query.data.n_cells > 0;
 
   return (
     <div
@@ -482,21 +475,40 @@ export function UniverseScatter({
         width: "100%",
       }}
     >
+      {placeholder && (
+        <div
+          className={
+            query.isError
+              ? "universe-scatter-placeholder error"
+              : "universe-scatter-placeholder"
+          }
+        >
+          {placeholder}
+        </div>
+      )}
+      {!hasData ? null : (
+      <>
       <DeckGL
         views={new OrthographicView({ id: "ortho" })}
         viewState={viewState ?? undefined}
         controller={tool === "pan"}
         onViewStateChange={({ viewState: next, interactionState }) => {
-          // Any user-driven change (drag, pinch, scroll-zoom) carries
-          // a non-empty `interactionState`. Programmatic
-          // setViewState() calls leave it empty / falsy. Use that to
-          // mark "the user has taken the wheel" so subsequent
-          // container resizes don't yank the view back to auto-fit.
-          if (
-            interactionState &&
-            typeof interactionState === "object" &&
-            Object.keys(interactionState).length > 0
-          ) {
+          // Only the active gesture flags count as user interaction;
+          // deck.gl will set `inTransition: false` and similar on
+          // programmatic setViewState calls, which previously
+          // false-positived this check.
+          const is = interactionState as
+            | {
+                isDragging?: boolean;
+                isPanning?: boolean;
+                isZooming?: boolean;
+                isRotating?: boolean;
+              }
+            | undefined;
+          const isUserGesture = !!(
+            is?.isDragging || is?.isPanning || is?.isZooming || is?.isRotating
+          );
+          if (isUserGesture) {
             hasUserInteractedRef.current = true;
           }
           setViewState({
@@ -593,6 +605,8 @@ export function UniverseScatter({
             <div key={i}>{line}</div>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );

@@ -2908,16 +2908,21 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   min-height: 0;
   position: relative;
 }
-.universe-scatter.loading,
-.universe-scatter.error,
-.universe-scatter.empty {
+.universe-scatter-placeholder {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--muted, #6b7280);
   font-size: 13px;
+  pointer-events: none;
+  z-index: 1;
 }
-.universe-scatter.error { color: #b00020; }
+.universe-scatter-placeholder.error { color: #b00020; }
 
 /* Drawer — always shows a handle strip; body slides in when open. */
 .explore-drawer {
