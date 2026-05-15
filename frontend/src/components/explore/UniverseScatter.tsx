@@ -34,6 +34,11 @@ interface Props {
   sizeBy?: string | null;
   sizeMinPx?: number;
   sizeMaxPx?: number;
+  /** Optional clipping for the numeric color channel. Values outside
+   *  [colorMin, colorMax] clamp to the endpoint hex so long-tail
+   *  outliers can't blow out the full colorscale onto a few cells. */
+  colorMin?: number | null;
+  colorMax?: number | null;
   decorationTables?: string[];
   matVersion?: number | "live" | null;
   /** Cell_ids to render in the highlight layer (orange or, when color
@@ -159,6 +164,8 @@ export function UniverseScatter({
   sizeBy,
   sizeMinPx,
   sizeMaxPx,
+  colorMin,
+  colorMax,
   decorationTables,
   matVersion,
   highlightedCellIds,
@@ -217,8 +224,18 @@ export function UniverseScatter({
       buildPartition(query.data, highlightedCellIds, extent, {
         sizeMinPx: sizeMinPx ?? 2,
         sizeMaxPx: sizeMaxPx ?? 18,
+        colorMin: colorMin ?? null,
+        colorMax: colorMax ?? null,
       }),
-    [query.data, highlightedCellIds, extent, sizeMinPx, sizeMaxPx],
+    [
+      query.data,
+      highlightedCellIds,
+      extent,
+      sizeMinPx,
+      sizeMaxPx,
+      colorMin,
+      colorMax,
+    ],
   );
 
   // Measure the container so the initial fit uses the actual canvas
@@ -648,7 +665,15 @@ function buildPartition(
   data: EmbeddingScatterResponse | undefined,
   highlight: Set<string> | null | undefined,
   extent: Extent | null,
-  sizeOpts: { sizeMinPx: number; sizeMaxPx: number },
+  opts: {
+    sizeMinPx: number;
+    sizeMaxPx: number;
+    /** Numeric-color clipping endpoints. Null = use the full data
+     *  extent (no clipping). When set, values clamp to the endpoint
+     *  colors. */
+    colorMin: number | null;
+    colorMax: number | null;
+  },
 ): Partition | null {
   if (!data || !extent) return null;
   const n = data.cell_ids.length;
@@ -660,7 +685,7 @@ function buildPartition(
   // now driven by the size-range slider without a refetch.
   let sizePx: number[] | null = null;
   if (data.size) {
-    sizePx = rankScaleToPx(data.size.values, sizeOpts.sizeMinPx, sizeOpts.sizeMaxPx);
+    sizePx = rankScaleToPx(data.size.values, opts.sizeMinPx, opts.sizeMaxPx);
   }
   // Per-axis linear scalers to [0, 1]. Constant-axis (xMax === xMin)
   // collapses to 0.5 so every point lands at the middle of that axis
@@ -676,6 +701,10 @@ function buildPartition(
   // Precompute per-point color RGBA. Categorical → lookup color_map;
   // numeric → continuous Viridis; unbound → fall back to base/highlight
   // hexes depending on partition membership (decided per-point below).
+  // For numeric color, user-supplied clipping (opts.colorMin / opts.
+  // colorMax) overrides the data extent — values outside the clipped
+  // range clamp to the endpoint hex so a long-tail outlier doesn't
+  // blow the colorscale onto two extreme dots.
   let numericLo = 0;
   let numericHi = 1;
   if (colorBlock?.kind === "numeric") {
@@ -687,8 +716,8 @@ function buildPartition(
       if (v > hi) hi = v;
     }
     if (Number.isFinite(lo)) {
-      numericLo = lo;
-      numericHi = hi;
+      numericLo = opts.colorMin != null ? opts.colorMin : lo;
+      numericHi = opts.colorMax != null ? opts.colorMax : hi;
     }
   }
 
@@ -769,7 +798,7 @@ function buildPartition(
   // the GPU buffers. Including the binding identity here is enough; the
   // per-point arrays are immutable for a given binding set.
   const colorRevision = `${colorBlock?.column ?? ""}|${colorBlock?.kind ?? ""}|${hasHighlight ? "hl" : "no-hl"}`;
-  const sizeRevision = `${sizeBlock?.column ?? ""}|${sizeOpts.sizeMinPx}|${sizeOpts.sizeMaxPx}|${hasHighlight ? "hl" : "no-hl"}`;
+  const sizeRevision = `${sizeBlock?.column ?? ""}|${opts.sizeMinPx}|${opts.sizeMaxPx}|${hasHighlight ? "hl" : "no-hl"}`;
   return { base, highlight: hl, colorRevision, sizeRevision };
 }
 

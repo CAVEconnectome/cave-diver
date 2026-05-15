@@ -82,33 +82,38 @@ export function SummaryPanel({ scatter, highlightedCellIds }: Props) {
 
   if (!scatter) return null;
 
-  // Numeric channel selection for the histogram view:
-  //   1. Color, when bound numerically — color's the user's primary
-  //      visual encoding, so it gets the panel.
-  //   2. Size, when bound (always numeric) and color isn't categorical.
-  //   3. Nothing — falls back to the categorical/empty case above.
-  // The histogram color matches whatever channel is in play: numeric-
-  // color uses a Viridis mid-stop; size uses the project accent
-  // because there's no "color of the size encoding."
-  const numericChannel = (() => {
-    const c = scatter.color;
-    if (c && c.kind === "numeric") {
-      return {
-        column: c.column,
-        values: c.values as Array<number | null>,
-        color: "#21908d", // mid-Viridis teal
-      };
-    }
-    const s = scatter.size;
-    if (s && c?.kind !== "categorical") {
-      return {
-        column: s.column,
-        values: s.values,
-        color: "#f59e0b",
-      };
-    }
-    return null;
-  })();
+  // Numeric channels for the histogram view: render *every* bound
+  // numeric channel as its own histogram. When the user has both
+  // color (numeric) and size bound, both distributions show — the
+  // panel mirrors what's in the rail. When color is categorical it
+  // gets the stacked-bar treatment above; size still gets its own
+  // histogram below.
+  //
+  // Channel-color convention:
+  //   - numeric color → mid-Viridis teal (matches the scatter colorscale)
+  //   - size → project accent orange (no "color of size" otherwise)
+  const numericChannels: Array<{
+    key: string;
+    column: string;
+    values: Array<number | null>;
+    color: string;
+  }> = [];
+  if (scatter.color && scatter.color.kind === "numeric") {
+    numericChannels.push({
+      key: "color",
+      column: scatter.color.column,
+      values: scatter.color.values as Array<number | null>,
+      color: "#21908d",
+    });
+  }
+  if (scatter.size) {
+    numericChannels.push({
+      key: "size",
+      column: scatter.size.column,
+      values: scatter.size.values,
+      color: "#f59e0b",
+    });
+  }
 
   const maxUniverse = categories
     ? Math.max(...categories.map((c) => c.universeCount), 1)
@@ -140,15 +145,16 @@ export function SummaryPanel({ scatter, highlightedCellIds }: Props) {
           ))}
         </div>
       )}
-      {numericChannel && (
+      {numericChannels.map((ch) => (
         <NumericHistogram
-          column={numericChannel.column}
-          values={numericChannel.values}
+          key={ch.key}
+          column={ch.column}
+          values={ch.values}
           cellIds={scatter.cell_ids}
           highlightedCellIds={highlightedCellIds ?? null}
-          color={numericChannel.color}
+          color={ch.color}
         />
-      )}
+      ))}
     </div>
   );
 }

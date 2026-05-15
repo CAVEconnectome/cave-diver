@@ -52,15 +52,21 @@ export function FeatureExplorer() {
   const [sizeBinding] = useUrlParam("size");
   const [sizeMinRaw] = useUrlParam("size_min");
   const [sizeMaxRaw] = useUrlParam("size_max");
+  const [colorMinRaw] = useUrlParam("color_min");
+  const [colorMaxRaw] = useUrlParam("color_max");
   // Drawer state for the cell-list table. Closed by default so the
   // scatter owns the full canvas on first arrival; user clicks the
   // drawer handle to pull up the table.
   const [tableRaw, setTable] = useUrlParam("table");
   const tableOpen = tableRaw === "open";
-  // Size range falls back to backend defaults when URL is silent. The
-  // values are parsed each render; URL is the source of truth.
+  // Size range falls back to client defaults when URL is silent.
   const sizeMinPx = sizeMinRaw ? parseFloat(sizeMinRaw) : 2.0;
   const sizeMaxPx = sizeMaxRaw ? parseFloat(sizeMaxRaw) : 18.0;
+  // Color clipping is null-default — the slider's bounds come from
+  // the data extent at render time, and null means "use the full
+  // extent." Explicit URL values clamp the colorscale endpoints.
+  const colorMin = colorMinRaw ? parseFloat(colorMinRaw) : null;
+  const colorMax = colorMaxRaw ? parseFloat(colorMaxRaw) : null;
   const setUrl = useSetUrlParams();
 
   const matVersion = parseMatVersion(mv);
@@ -102,8 +108,9 @@ export function FeatureExplorer() {
 
   // Scatter response — fetched by UniverseScatter too, but TanStack
   // Query dedupes by queryKey so there's only one network call. We
-  // read it here to feed the SummaryPanel's universe counts without
-  // prop-drilling from UniverseScatter.
+  // read it here to feed the SummaryPanel's universe counts + the
+  // ChannelPicker's color-slider bounds without prop-drilling from
+  // UniverseScatter.
   const scatter = useEmbeddingScatter(
     ds && ft && emb
       ? {
@@ -119,6 +126,23 @@ export function FeatureExplorer() {
         }
       : null,
   );
+
+  // Color slider bounds: data extent of the bound numeric column.
+  // Recomputed on each response so the slider always reflects the
+  // current column's range, not a stale one from a previous binding.
+  const colorBound = useMemo(() => {
+    const c = scatter.data?.color;
+    if (!c || c.kind !== "numeric") return null;
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = Number.NEGATIVE_INFINITY;
+    for (const v of c.values) {
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    if (!Number.isFinite(lo)) return null;
+    return { lo, hi };
+  }, [scatter.data?.color]);
 
   // /cells fetch — the cell-list table reads from this. When a lasso
   // is active, the request includes the cell_id subset so the table
@@ -237,6 +261,10 @@ export function FeatureExplorer() {
           sizeBy={sizeBinding}
           sizeMinPx={sizeMinPx}
           sizeMaxPx={sizeMaxPx}
+          colorBound={colorBound}
+          colorMin={colorMin}
+          colorMax={colorMax}
+          colorIsNumeric={scatter.data?.color?.kind === "numeric"}
           defaultXLabel={currentEmb?.axes?.[0]}
           defaultYLabel={currentEmb?.axes?.[1]}
           defaultColorLabel={currentEmb?.default_color_by ?? null}
@@ -251,6 +279,12 @@ export function FeatureExplorer() {
                 : {}),
               ...(next.sizeMaxPx !== undefined
                 ? { size_max: String(next.sizeMaxPx) }
+                : {}),
+              ...(next.colorMin !== undefined
+                ? { color_min: next.colorMin === null ? null : String(next.colorMin) }
+                : {}),
+              ...(next.colorMax !== undefined
+                ? { color_max: next.colorMax === null ? null : String(next.colorMax) }
                 : {}),
             })
           }
@@ -276,6 +310,8 @@ export function FeatureExplorer() {
             sizeBy={sizeBinding}
             sizeMinPx={sizeMinPx}
             sizeMaxPx={sizeMaxPx}
+            colorMin={colorMin}
+            colorMax={colorMax}
             decorationTables={decorationTables}
             matVersion={matVersion}
             highlightedCellIds={highlightedCellIds}

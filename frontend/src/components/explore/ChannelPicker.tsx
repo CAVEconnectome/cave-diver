@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { ColumnGroup, FeatureTableListItem } from "../../api/types";
-import { SizeRangeSlider } from "./SizeRangeSlider";
+import { RangeSlider } from "./RangeSlider";
 
 interface ChannelOption {
   /** URL/query value — `<table>.<col>` (always dotted, since parquet
@@ -32,6 +32,17 @@ interface Props {
    *  parent — typically 2/18). */
   sizeMinPx: number;
   sizeMaxPx: number;
+  /** Numeric color channel clipping. ``colorBound`` is the underlying
+   *  data extent (from the response); ``colorMin``/``colorMax`` are
+   *  the user-clamped values within it. Only meaningful when color is
+   *  bound to a numeric column. */
+  colorBound?: { lo: number; hi: number } | null;
+  colorMin?: number | null;
+  colorMax?: number | null;
+  /** Whether the color channel is currently numeric. The slider only
+   *  renders for numeric bindings — clipping a categorical palette
+   *  doesn't make sense. */
+  colorIsNumeric?: boolean;
   defaultXLabel?: string; // shown when x is null (the embedding's declared axis)
   defaultYLabel?: string;
   defaultColorLabel?: string | null; // embedding's default_color_by
@@ -42,6 +53,8 @@ interface Props {
     sizeBy?: string | null;
     sizeMinPx?: number;
     sizeMaxPx?: number;
+    colorMin?: number | null;
+    colorMax?: number | null;
   }) => void;
 }
 
@@ -69,6 +82,10 @@ export function ChannelPicker({
   sizeBy,
   sizeMinPx,
   sizeMaxPx,
+  colorBound,
+  colorMin,
+  colorMax,
+  colorIsNumeric,
   defaultXLabel,
   defaultYLabel,
   defaultColorLabel,
@@ -142,8 +159,31 @@ export function ChannelPicker({
         defaultLabel={defaultColorLabel ?? "—"}
         options={colorOptions}
         allowNone
-        onChange={(v) => onChange({ colorBy: v })}
+        onChange={(v) =>
+          onChange({
+            colorBy: v,
+            // Reset color-range clipping when the column changes —
+            // the old min/max bounds are meaningless for a new column.
+            colorMin: null,
+            colorMax: null,
+          })
+        }
       />
+      {colorBy && colorIsNumeric && colorBound && (
+        <RangeSlider
+          label="range"
+          bound={colorBound}
+          min={colorMin ?? colorBound.lo}
+          max={colorMax ?? colorBound.hi}
+          formatValue={formatNumericTick}
+          onChange={(next) =>
+            onChange({
+              ...(next.min !== undefined ? { colorMin: next.min } : {}),
+              ...(next.max !== undefined ? { colorMax: next.max } : {}),
+            })
+          }
+        />
+      )}
       <ChannelSelect
         label="size"
         value={sizeBy}
@@ -153,19 +193,31 @@ export function ChannelPicker({
         onChange={(v) => onChange({ sizeBy: v })}
       />
       {sizeBy && (
-        <SizeRangeSlider
-          minPx={sizeMinPx}
-          maxPx={sizeMaxPx}
+        <RangeSlider
+          label="size"
+          bound={{ lo: 1, hi: 24 }}
+          min={sizeMinPx}
+          max={sizeMaxPx}
+          step={0.5}
+          formatValue={(v) => `${v.toFixed(1)} px`}
           onChange={(next) =>
             onChange({
-              ...(next.minPx !== undefined ? { sizeMinPx: next.minPx } : {}),
-              ...(next.maxPx !== undefined ? { sizeMaxPx: next.maxPx } : {}),
+              ...(next.min !== undefined ? { sizeMinPx: next.min } : {}),
+              ...(next.max !== undefined ? { sizeMaxPx: next.max } : {}),
             })
           }
         />
       )}
     </div>
   );
+}
+
+function formatNumericTick(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  if (Math.abs(n) >= 1000 || (Math.abs(n) < 0.01 && n !== 0))
+    return n.toExponential(1);
+  if (Math.abs(n) >= 100) return n.toFixed(0);
+  return n.toFixed(2);
 }
 
 function ChannelSelect({
