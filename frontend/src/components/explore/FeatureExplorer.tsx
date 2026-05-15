@@ -45,6 +45,12 @@ export function FeatureExplorer() {
   const [yBinding] = useUrlParam("y");
   const [colorBinding] = useUrlParam("color");
   const [sizeBinding] = useUrlParam("size");
+  const [sizeMinRaw] = useUrlParam("size_min");
+  const [sizeMaxRaw] = useUrlParam("size_max");
+  // Size range falls back to backend defaults when URL is silent. The
+  // values are parsed each render; URL is the source of truth.
+  const sizeMinPx = sizeMinRaw ? parseFloat(sizeMinRaw) : 2.0;
+  const sizeMaxPx = sizeMaxRaw ? parseFloat(sizeMaxRaw) : 18.0;
   const setUrl = useSetUrlParams();
 
   const matVersion = parseMatVersion(mv);
@@ -197,6 +203,8 @@ export function FeatureExplorer() {
           y={yBinding}
           colorBy={colorBinding}
           sizeBy={sizeBinding}
+          sizeMinPx={sizeMinPx}
+          sizeMaxPx={sizeMaxPx}
           defaultXLabel={currentEmb?.axes?.[0]}
           defaultYLabel={currentEmb?.axes?.[1]}
           defaultColorLabel={currentEmb?.default_color_by ?? null}
@@ -206,6 +214,12 @@ export function FeatureExplorer() {
               ...(next.y !== undefined ? { y: next.y } : {}),
               ...(next.colorBy !== undefined ? { color: next.colorBy } : {}),
               ...(next.sizeBy !== undefined ? { size: next.sizeBy } : {}),
+              ...(next.sizeMinPx !== undefined
+                ? { size_min: String(next.sizeMinPx) }
+                : {}),
+              ...(next.sizeMaxPx !== undefined
+                ? { size_max: String(next.sizeMaxPx) }
+                : {}),
             })
           }
         />
@@ -223,6 +237,8 @@ export function FeatureExplorer() {
           y={yBinding}
           colorBy={colorBinding}
           sizeBy={sizeBinding}
+          sizeMinPx={sizeMinPx}
+          sizeMaxPx={sizeMaxPx}
           decorationTables={decorationTables}
           matVersion={matVersion}
           highlightedCellIds={highlightedCellIds}

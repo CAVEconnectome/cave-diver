@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ColumnGroup, FeatureTableListItem } from "../../api/types";
+import { SizeRangeSlider } from "./SizeRangeSlider";
 
 interface ChannelOption {
   /** URL/query value — `<table>.<col>` (always dotted, since parquet
@@ -27,6 +28,10 @@ interface Props {
   y: string | null;
   colorBy: string | null;
   sizeBy: string | null;
+  /** Current px range for the size channel (defaults applied by the
+   *  parent — typically 2/18). */
+  sizeMinPx: number;
+  sizeMaxPx: number;
   defaultXLabel?: string; // shown when x is null (the embedding's declared axis)
   defaultYLabel?: string;
   defaultColorLabel?: string | null; // embedding's default_color_by
@@ -35,6 +40,8 @@ interface Props {
     y?: string | null;
     colorBy?: string | null;
     sizeBy?: string | null;
+    sizeMinPx?: number;
+    sizeMaxPx?: number;
   }) => void;
 }
 
@@ -60,6 +67,8 @@ export function ChannelPicker({
   y,
   colorBy,
   sizeBy,
+  sizeMinPx,
+  sizeMaxPx,
   defaultXLabel,
   defaultYLabel,
   defaultColorLabel,
@@ -143,6 +152,18 @@ export function ChannelPicker({
         allowNone
         onChange={(v) => onChange({ sizeBy: v })}
       />
+      {sizeBy && (
+        <SizeRangeSlider
+          minPx={sizeMinPx}
+          maxPx={sizeMaxPx}
+          onChange={(next) =>
+            onChange({
+              ...(next.minPx !== undefined ? { sizeMinPx: next.minPx } : {}),
+              ...(next.maxPx !== undefined ? { sizeMaxPx: next.maxPx } : {}),
+            })
+          }
+        />
+      )}
     </div>
   );
 }

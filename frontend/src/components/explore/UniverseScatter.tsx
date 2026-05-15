@@ -24,6 +24,8 @@ interface Props {
   y?: string | null;
   colorBy?: string | null;
   sizeBy?: string | null;
+  sizeMinPx?: number;
+  sizeMaxPx?: number;
   decorationTables?: string[];
   matVersion?: number | "live" | null;
   /** Cell_ids to render in the highlight layer (orange or, when color
@@ -126,6 +128,8 @@ export function UniverseScatter({
   y: yBinding,
   colorBy,
   sizeBy,
+  sizeMinPx,
+  sizeMaxPx,
   decorationTables,
   matVersion,
   highlightedCellIds,
@@ -160,6 +164,8 @@ export function UniverseScatter({
     y: yBinding,
     colorBy,
     sizeBy,
+    sizeMinPx,
+    sizeMaxPx,
     decorationTables,
     matVersion,
   });

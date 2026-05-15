@@ -3001,3 +3001,97 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   z-index: 3;
   pointer-events: none;
 }
+
+/* ---- Size range slider (dual-thumb) ---------------------------------- */
+.size-range-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 0 0;
+}
+.size-range-slider-row {
+  display: grid;
+  grid-template-columns: 50px 1fr;
+  align-items: center;
+  gap: 6px;
+}
+.size-range-slider-label {
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.size-range-slider-track-wrap {
+  position: relative;
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+.size-range-slider-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  background: var(--border, #e5e7eb);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.size-range-slider-track-active {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  background: #f59e0b;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.size-range-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: none;
+}
+/* Re-enable pointer events only on the thumb itself, so the two
+   stacked inputs don't block each other along the track. */
+.size-range-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid #f59e0b;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.size-range-thumb::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid #f59e0b;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.size-range-thumb::-webkit-slider-runnable-track,
+.size-range-thumb::-moz-range-track {
+  background: transparent;
+  height: 4px;
+}
+.size-range-slider-readout {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted, #6b7280);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  padding-left: 56px;
+}

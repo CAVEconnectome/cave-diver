@@ -59,6 +59,10 @@ export interface EmbeddingScatterArgs {
   colorBy?: string | null;
   /** Optional size channel column (numeric only). */
   sizeBy?: string | null;
+  /** Minimum / maximum px for the size channel's visual encoding.
+   *  Only meaningful when sizeBy is set. Defaults to 2 / 18 server-side. */
+  sizeMinPx?: number | null;
+  sizeMaxPx?: number | null;
   /** Attached decoration tables — required when any channel references
    *  a `<table>.<col>` not on the feature_table itself. */
   decorationTables?: string[];
@@ -81,6 +85,8 @@ export function useEmbeddingScatter(args: EmbeddingScatterArgs | null) {
           args.y ?? "",
           args.colorBy ?? "",
           args.sizeBy ?? "",
+          args.sizeMinPx ?? "",
+          args.sizeMaxPx ?? "",
           (args.decorationTables ?? []).join(","),
           args.matVersion ?? "",
         ]
@@ -94,6 +100,14 @@ export function useEmbeddingScatter(args: EmbeddingScatterArgs | null) {
             y: args!.y || undefined,
             color: args!.colorBy || undefined,
             size: args!.sizeBy || undefined,
+            size_min:
+              args!.sizeBy && args!.sizeMinPx != null
+                ? String(args!.sizeMinPx)
+                : undefined,
+            size_max:
+              args!.sizeBy && args!.sizeMaxPx != null
+                ? String(args!.sizeMaxPx)
+                : undefined,
             dec: args!.decorationTables?.length
               ? args!.decorationTables.join(",")
               : undefined,

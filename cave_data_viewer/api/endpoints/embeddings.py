@@ -196,6 +196,20 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
     y_override = request.args.get("y") or None
     color_col = request.args.get("color") or None
     size_col = request.args.get("size") or None
+    # Size range bounds — let the client widen/narrow the visual range
+    # of the size channel without server changes. Defaults match the
+    # _scale_size_rank defaults (2–18 px). Bounded to a sane envelope
+    # so a stray URL value doesn't render giant blobs.
+    try:
+        size_min_px = float(request.args.get("size_min", 2.0))
+        size_max_px = float(request.args.get("size_max", 18.0))
+    except ValueError as exc:
+        raise ApiError(
+            422, "invalid_size_range",
+            f"size_min / size_max must be numeric: {exc}",
+        ) from exc
+    size_min_px = max(0.5, min(size_min_px, 40.0))
+    size_max_px = max(size_min_px + 0.5, min(size_max_px, 40.0))
     mv_raw = request.args.get("mat_version")
     if mv_raw is None or mv_raw == "":
         mat_version: int | str | None = None
@@ -357,7 +371,7 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
         # handles large markers without overdraw issues. Hover surfaces
         # the raw value in raw_range so the user can still read the
         # actual number.
-        scaled = _scale_size_rank(series, lo_px=2.0, hi_px=18.0)
+        scaled = _scale_size_rank(series, lo_px=size_min_px, hi_px=size_max_px)
         size_block = {
             "column": size_col,
             "values": [float(v) for v in scaled.tolist()],
