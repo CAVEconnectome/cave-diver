@@ -50,7 +50,31 @@ from ..services.categorical import (
     get_unique_values as _categorical_get_unique_values,
     resolve_categorical_color_map,
 )
-from ..services.plots import _apply_cell_filters, _parse_cells_param, _scale_size
+from ..services.plots import _apply_cell_filters, _parse_cells_param
+
+
+def _scale_size_rank(
+    values: pd.Series, *, lo_px: float = 2.0, hi_px: float = 18.0
+) -> pd.Series:
+    """Percentile-rank scaling to ``[lo_px, hi_px]``.
+
+    Each row's size is its rank position in the sorted distribution,
+    mapped linearly into the px range. Uniform visual spread regardless
+    of the source distribution's shape — long-tailed features
+    (soma_volume_um, etc.) get the same visual fidelity as roughly-
+    uniform ones (depth, etc.).
+
+    Ties get the average rank (pandas' default). NaN / non-numeric
+    rows fall to ``lo_px`` so they're visible-but-deprioritized.
+    """
+    s = pd.to_numeric(values, errors="coerce")
+    if s.notna().sum() == 0:
+        return pd.Series([hi_px] * len(values), index=values.index)
+    ranks = s.rank(method="average", pct=True)
+    # NaN ranks → smallest size so the user sees they're there but
+    # they don't visually compete with valid data.
+    ranks = ranks.fillna(0.0)
+    return ranks * (hi_px - lo_px) + lo_px
 
 bp = Blueprint("embeddings", __name__, url_prefix="/datastacks")
 
@@ -320,12 +344,20 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
             raw_range = [0.0, 0.0]
         else:
             raw_range = [float(finite.min()), float(finite.max())]
-        # Cap the size range tighter than the partner-frame default
-        # (4-20px). 12px on 94k scattergl points hits overdraw + GPU
-        # buffer budgets hard enough to corrupt rendering on some
-        # Chrome/Mac configurations; 3-10px stays well clear with the
-        # same visual encoding density.
-        scaled = _scale_size(series, lo_px=3.0, hi_px=10.0)
+        # Percentile-rank scaling so the visual encoding is uniform
+        # regardless of the source distribution. Linear scaling of
+        # long-tailed morphology features (soma_volume, nucleus_area,
+        # etc. — typical for connectomics) compresses most cells to
+        # the small end with a few visible outliers; "looks broken"
+        # because the variation hides in the tail. Rank scaling gives
+        # the same visual span across the dataset, which is what users
+        # expect from a "size by feature" binding.
+        #
+        # 2-18px range — wider than the Plotly-era 3-10 because deck.gl
+        # handles large markers without overdraw issues. Hover surfaces
+        # the raw value in raw_range so the user can still read the
+        # actual number.
+        scaled = _scale_size_rank(series, lo_px=2.0, hi_px=18.0)
         size_block = {
             "column": size_col,
             "values": [float(v) for v in scaled.tolist()],
