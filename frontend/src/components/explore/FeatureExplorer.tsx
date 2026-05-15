@@ -360,6 +360,12 @@ export function FeatureExplorer() {
       // Error surfaces via segmentsLink.isError below the buttons.
     }
   };
+  // Per-row NGL action — opens a single cell as a segment. Wraps the
+  // bulk handler with a one-id list; reuses the same mutation +
+  // error-surface so the user sees "NGL link failed" if it errors.
+  const openCellInNgl = (cellId: string) => {
+    void openInNgl([cellId]);
+  };
 
   // Enrich cellList rows with the resolved root_id so PartnersTable's
   // existing rendering machinery picks it up like any other column.
@@ -698,6 +704,7 @@ export function FeatureExplorer() {
                 externalSelection={
                   limitToCellIds.length > 0 ? limitToCellIds : null
                 }
+                onRowNglClick={openCellInNgl}
               />
             </div>
           )}

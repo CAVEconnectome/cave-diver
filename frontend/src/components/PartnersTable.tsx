@@ -65,6 +65,13 @@ interface Props {
    *  keeps the in-memory selection it always had. */
   selectedIds?: string[];
   onSelectedIdsChange?: (ids: string[]) => void;
+  /** Per-row NGL handler. When supplied, the per-row "↗" action
+   *  column renders (whether or not `enableNglAction` is true) and
+   *  this callback fires on click instead of the default focal-cell
+   *  template flow. Used by /explore so its rows can route through
+   *  `/links/segments` with a resolved root_id, distinct from
+   *  /neuron's `/links?template=...` partner-frame path. */
+  onRowNglClick?: (rowId: string) => void;
 }
 
 // Column key may be `<table>.<col>` (decoration table) or just `<col>` (intrinsic /
@@ -170,7 +177,7 @@ function csvCell(value: unknown): string {
   return s;
 }
 
-export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnGroups, decorationTables, defaultHiddenColumns, externalSelection, onClearSelection, labelOverrides, keyColumn = "root_id", crossNavHref, enableNglAction = true, rowsLabel = "partners", selectedIds, onSelectedIdsChange }: Props) {
+export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnGroups, decorationTables, defaultHiddenColumns, externalSelection, onClearSelection, labelOverrides, keyColumn = "root_id", crossNavHref, enableNglAction = true, rowsLabel = "partners", selectedIds, onSelectedIdsChange, onRowNglClick }: Props) {
   const [searchParams] = useSearchParams();
   const setUrlParams = useSetUrlParams();
   const makeLink = useMakeLinkMutation();
@@ -555,14 +562,23 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
             meta: { actionPlaceholder: true },
           },
         ];
-        if (enableNglAction) {
+        // Per-row NGL action renders when EITHER (a) the legacy
+        // focal-cell template path is enabled, OR (b) a custom
+        // onRowNglClick callback is provided. The explorer takes
+        // path (b); /neuron takes path (a). Both result in the same
+        // ↗ icon in the same column slot.
+        const showRowNgl = !!onRowNglClick || enableNglAction;
+        if (showRowNgl) {
+          const handleRowNgl = onRowNglClick
+            ? (rowId: string) => onRowNglClick(rowId)
+            : (rowId: string) => open(linkTemplate, [rowId]);
           leafs.push({
             id: "__action_ngl__",
             header: "",
             cell: (ctx) => (
               <button
                 className="row-action"
-                onClick={() => open(linkTemplate, [ctx.row.id])}
+                onClick={() => handleRowNgl(ctx.row.id)}
                 title="Open this row in Neuroglancer"
                 aria-label="Open this row in Neuroglancer"
               >↗</button>
@@ -605,7 +621,7 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
         columns: leafs,
       };
     });
-  }, [columnGroups, leafColumnDefs, collapsedGroups, hrefFor, open, linkTemplate, enableNglAction]);
+  }, [columnGroups, leafColumnDefs, collapsedGroups, hrefFor, open, linkTemplate, enableNglAction, onRowNglClick]);
 
   // External selection (from a plot brush) ANDs with column filters via
   // TanStack's globalFilter. Empty / null disables; otherwise rows whose
