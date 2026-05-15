@@ -39,6 +39,7 @@ from ..services.embeddings import (
     EmbeddingSpec,
     FeatureTableSpec,
     get_index,
+    load_feature_table_frame,
     resolve_cell_ids_to_root_ids,
     reverse_resolve_root_id_to_cell_id,
     source_for,
@@ -77,6 +78,86 @@ def list_feature_tables(ds: str):
             "cell_id_source_table": cfg.feature_explorer.cell_id_source_table,
             "knn": manifest.knn.model_dump(),
             "feature_tables": [_feature_table_summary(ft) for ft in manifest.feature_tables],
+        }
+    )
+
+
+@bp.route(
+    "/<ds>/feature_tables/<feature_table_id>/embeddings/<embedding_id>/scatter",
+    methods=["GET"],
+)
+@auth_required
+def scatter(ds: str, feature_table_id: str, embedding_id: str):
+    """Universe scatter payload for one embedding view.
+
+    Returns parallel arrays — ``cell_ids`` + the two axis columns the
+    embedding declares — for *every* cell in the parquet, with no filter
+    and no decoration merge applied. This is the universe layer the SPA's
+    ``UniverseScatter`` renders as its base trace; highlight overlays
+    (``?cells=`` filter result, ``?sel_<id>=`` brush, lasso selection)
+    are computed client-side as Set<cell_id> intersections over the
+    universe's ``cell_ids`` array, no extra round-trip per filter change.
+
+    No CAVE call. Backed by ``dcv_embedding_frame_cache`` (immutable L1
+    + L2 GCS), so cold pods see a one-time parquet read and every
+    subsequent request is dict-fast.
+
+    Response shape::
+
+        {
+          "cell_ids": ["12345", "12346", ...],
+          "x": [1.23, 2.34, ...],
+          "y": [-0.12, 4.21, ...],
+          "n_cells": 1000,
+          "axes": {"x": "umap_x", "y": "umap_y"}
+        }
+
+    ``cell_ids`` is stringified at the JSON boundary per the project's
+    int64-as-string convention, even though cell_ids fit comfortably in
+    JS Number — keeps the wire shape symmetric with root_id payloads.
+    """
+    cfg = load_datastack_config(ds)
+    src = source_for(ds, cfg)
+    if src is None:
+        raise ApiError(
+            404,
+            "feature_explorer_disabled",
+            f"datastack {ds!r} does not enable the feature explorer",
+        )
+
+    try:
+        ft, emb = src.resolve_embedding(feature_table_id, embedding_id)
+    except KeyError as exc:
+        raise ApiError(404, "embedding_not_found", str(exc)) from exc
+
+    frame = load_feature_table_frame(ds, ft, cache_ds=cfg.cache_alias or ds)
+    x_col, y_col = emb.axes[0], emb.axes[1]
+    missing = [c for c in (ft.id_column, x_col, y_col) if c not in frame.columns]
+    if missing:
+        # Axes are declared by the manifest but the parquet doesn't have
+        # them — surfaces a manifest/parquet mismatch as a 422 rather
+        # than a confusing KeyError deep inside numpy.
+        raise ApiError(
+            422,
+            "embedding_axes_missing",
+            f"embedding {embedding_id!r} on feature_table {feature_table_id!r} "
+            f"references columns {missing!r} which are not in the parquet at "
+            f"{ft.source.uri!r} (have {list(frame.columns)})",
+        )
+
+    # `.tolist()` lands as native Python types so jsonify's default encoder
+    # handles them without the NumpyJSONProvider's scalar-coercion path.
+    # Cell_ids stringified individually to preserve int64 precision and
+    # match the partner-frame wire shape — even though cell_ids fit in
+    # JS Number, downstream code that compares ids in URL params expects
+    # strings throughout.
+    return jsonify(
+        {
+            "cell_ids": [str(int(c)) for c in frame[ft.id_column].tolist()],
+            "x": frame[x_col].astype(float).tolist(),
+            "y": frame[y_col].astype(float).tolist(),
+            "n_cells": int(len(frame)),
+            "axes": {"x": x_col, "y": y_col},
         }
     )
 
