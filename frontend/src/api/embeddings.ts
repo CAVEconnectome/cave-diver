@@ -135,6 +135,10 @@ export interface CellListArgs {
   matVersion: number | "live" | null;
   decorationTables?: string[];
   cells?: string | null;
+  /** Explicit cell_id subset (e.g. from a universe-scatter lasso).
+   *  ANDs with the `cells` filter expression server-side. Null or
+   *  empty means no lasso constraint. */
+  selCellIds?: string[] | null;
   limit?: number;
 }
 
@@ -150,6 +154,7 @@ export function useCellList(args: CellListArgs | null) {
           args.matVersion,
           (args.decorationTables ?? []).join(","),
           args.cells ?? "",
+          (args.selCellIds ?? []).join(","),
           args.limit ?? null,
         ]
       : ["feature_cells", "disabled"],
@@ -166,6 +171,9 @@ export function useCellList(args: CellListArgs | null) {
             ? args!.decorationTables.join(",")
             : undefined,
           cells: args!.cells || undefined,
+          sel_cell_ids: args!.selCellIds?.length
+            ? args!.selCellIds.join(",")
+            : undefined,
           limit: args!.limit ? String(args!.limit) : undefined,
         },
       }),

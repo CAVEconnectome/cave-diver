@@ -88,9 +88,17 @@ export function FeatureExplorer() {
     }
   }, [catalog.data, featureTables, ft, emb, setUrl]);
 
-  // /cells fetch — the cell-list table reads from this; the highlight
-  // set on the scatter also derives from this (the cell_ids that
-  // matched the filter).
+  // Lasso selection: cell_ids in URL state. Parsed once here so both
+  // the highlight computation and the cell-list fetch reuse it.
+  const lassoCellIds = useMemo(
+    () => (selUniverseRaw ? selUniverseRaw.split(",").filter(Boolean) : []),
+    [selUniverseRaw],
+  );
+
+  // /cells fetch — the cell-list table reads from this. When a lasso
+  // is active, the request includes the cell_id subset so the table
+  // shows only lasso'd rows (ANDed with any active filter expression
+  // on the server). matched_count then reflects "filter ∩ lasso".
   const cellList = useCellList(
     ds && ft
       ? {
@@ -99,29 +107,23 @@ export function FeatureExplorer() {
           matVersion,
           decorationTables,
           cells,
+          selCellIds: lassoCellIds.length > 0 ? lassoCellIds : null,
         }
       : null,
   );
 
-  // Highlight set: filter result ∩ lasso selection (each defaults to
-  // "everything matches" when absent). Memoized as a Set<string> so
-  // UniverseScatter's per-point lookup is O(1).
+  // Highlight set on the scatter: the cell_id set that matters right
+  // now. With the /cells endpoint already applying the lasso ∧ filter
+  // intersection server-side, the response's `cell_ids` IS the
+  // intersection — we just consume it. Returns null when nothing is
+  // active so the scatter renders without an overlay.
   const highlightedCellIds = useMemo(() => {
     const filterActive = !!cells;
-    const lassoActive = !!selUniverseRaw;
+    const lassoActive = lassoCellIds.length > 0;
     if (!filterActive && !lassoActive) return null;
-    let working: Set<string> | null = null;
-    if (filterActive && cellList.data) {
-      working = new Set(cellList.data.cell_ids);
-    }
-    if (lassoActive) {
-      const lassoSet = new Set(selUniverseRaw.split(",").filter(Boolean));
-      working = working
-        ? new Set([...working].filter((cid) => lassoSet.has(cid)))
-        : lassoSet;
-    }
-    return working;
-  }, [cells, selUniverseRaw, cellList.data]);
+    if (!cellList.data) return null;
+    return new Set(cellList.data.cell_ids);
+  }, [cells, lassoCellIds, cellList.data]);
 
   if (!ds) {
     return (

@@ -482,6 +482,23 @@ def cells(ds: str, feature_table_id: str):
         if f.table not in decoration_tables:
             decoration_tables.append(f.table)
 
+    # Lasso selection — caller passes the explicit cell_id list from
+    # the universe scatter's ?sel_universe= URL key. ANDed with the
+    # filter expression after the frame is built. Empty / absent = no
+    # constraint. Large lassos (>~5k cell_ids) approach common URL
+    # length limits; we accept up to 50k here and rely on the caller
+    # to stay within request-size limits.
+    sel_cell_ids_raw = request.args.get("sel_cell_ids") or ""
+    sel_cell_ids: set[int] | None = None
+    if sel_cell_ids_raw:
+        try:
+            sel_cell_ids = {int(c) for c in sel_cell_ids_raw.split(",") if c}
+        except ValueError as exc:
+            raise ApiError(
+                422, "invalid_sel_cell_ids",
+                f"sel_cell_ids must be a comma-separated integer list: {exc}",
+            ) from exc
+
     # check_live_allowed + mat_version are only meaningful when we'll
     # actually call CAVE (decoration join). A parquet-only request runs
     # without a mat_version — the frame is pinned by parquet_uri.
@@ -525,6 +542,10 @@ def cells(ds: str, feature_table_id: str):
 
     if cell_filters:
         frame = _apply_cell_filters(frame, cell_filters)
+    if sel_cell_ids is not None:
+        # Lasso ANDs with the filter expression. The cell_id column is
+        # int64 in the frame; the URL gives us strings → ints.
+        frame = frame[frame["cell_id"].astype(int).isin(sel_cell_ids)]
     matched_count = int(len(frame))
 
     limit_hit = matched_count > limit
