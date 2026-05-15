@@ -3430,33 +3430,42 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border-color: var(--border, #e5e7eb);
 }
 
-/* "Show only selected" toggle — table view filter above the
-   cell list. Disabled state when there's no selection to narrow to. */
+/* Drawer toolbar — "Limit visible to selection" + "Reset visible"
+   action buttons. Discrete actions (not state) so the user can
+   mutate the selection underneath without the table view shifting. */
 .explore-drawer-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 6px 0 8px;
   border-bottom: 1px solid var(--border, #e5e7eb);
   margin-bottom: 8px;
+  flex-wrap: wrap;
 }
-.explore-only-selected {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.explore-toolbar-btn {
   font-size: 12px;
-  color: var(--text, #111);
+  padding: 4px 10px;
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 4px;
   cursor: pointer;
-  user-select: none;
+  color: var(--text, #111);
 }
-.explore-only-selected.disabled {
+.explore-toolbar-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+.explore-toolbar-btn:disabled {
   color: var(--muted, #9ca3af);
   cursor: not-allowed;
+  opacity: 0.55;
 }
-.explore-only-selected input[type="checkbox"] {
-  cursor: inherit;
-}
-.explore-only-selected-count {
+.explore-toolbar-btn-count {
   font-family: var(--font-mono, ui-monospace, monospace);
   color: var(--muted, #6b7280);
+}
+.explore-toolbar-hint {
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+  font-style: italic;
+  margin-left: 4px;
 }

@@ -175,12 +175,17 @@ export function FeatureExplorer() {
   // drawer handle to pull up the table.
   const [tableRaw, setTable] = useUrlParam("table");
   const tableOpen = tableRaw === "open";
-  // "Show only selected" — narrows the table to row-selected cells.
-  // Pure client-side filter (passed to PartnersTable as
-  // externalSelection); doesn't change the underlying /cells request
-  // or the cellList.cell_ids count surfaced in the drawer header.
-  const [onlySelectedRaw, setOnlySelected] = useUrlParam("only_selected");
-  const onlySelected = onlySelectedRaw === "1";
+  // "Limit visible to selection" — a *snapshot* of cell_ids the user
+  // froze at the moment they clicked the action. The table narrows
+  // to these. Distinct from `?sel_table` (the live selection) so the
+  // user can modify their selection (check/uncheck rows, lasso more)
+  // without the visible-set shifting under their interactions.
+  // "Reset visible" clears this state.
+  const [limitToRaw, setLimitTo] = useUrlParam("limit_to");
+  const limitToCellIds = useMemo(
+    () => (limitToRaw ? limitToRaw.split(",").filter(Boolean) : []),
+    [limitToRaw],
+  );
   // Size range falls back to client defaults when URL is silent.
   const sizeMinPx = sizeMinRaw ? parseFloat(sizeMinRaw) : 2.0;
   const sizeMaxPx = sizeMaxRaw ? parseFloat(sizeMaxRaw) : 18.0;
@@ -614,31 +619,42 @@ export function FeatureExplorer() {
           {tableOpen && enrichedCells && enrichedCells.rows.length > 0 && (
             <div className="explore-drawer-body">
               <div className="explore-drawer-toolbar">
-                <label
-                  className={`explore-only-selected${
-                    rowSelectedCellIds.length === 0 ? " disabled" : ""
-                  }`}
+                <button
+                  type="button"
+                  className="explore-toolbar-btn"
+                  disabled={rowSelectedCellIds.length === 0}
                   title={
                     rowSelectedCellIds.length === 0
-                      ? "Select some rows first to narrow the table to your selection"
-                      : "Hide non-selected rows from the table view"
+                      ? "Select some rows first, then snapshot the selection into the visible set"
+                      : `Snapshot ${rowSelectedCellIds.length} selected cells as the visible set — the table narrows to these and stays stable while you modify the selection`
                   }
+                  onClick={() => setLimitTo(rowSelectedCellIds.join(","))}
                 >
-                  <input
-                    type="checkbox"
-                    checked={onlySelected && rowSelectedCellIds.length > 0}
-                    disabled={rowSelectedCellIds.length === 0}
-                    onChange={(e) =>
-                      setOnlySelected(e.target.checked ? "1" : null)
-                    }
-                  />
-                  show only selected
+                  Limit visible to selection
                   {rowSelectedCellIds.length > 0 && (
-                    <span className="explore-only-selected-count">
+                    <span className="explore-toolbar-btn-count">
                       &nbsp;({rowSelectedCellIds.length})
                     </span>
                   )}
-                </label>
+                </button>
+                <button
+                  type="button"
+                  className="explore-toolbar-btn"
+                  disabled={limitToCellIds.length === 0}
+                  title={
+                    limitToCellIds.length === 0
+                      ? "Nothing limiting the visible set right now"
+                      : "Drop the snapshot — table returns to the full filter scope"
+                  }
+                  onClick={() => setLimitTo(null)}
+                >
+                  Reset visible
+                </button>
+                {limitToCellIds.length > 0 && (
+                  <span className="explore-toolbar-hint">
+                    visible limited to {limitToCellIds.length.toLocaleString()} snapshotted cells
+                  </span>
+                )}
               </div>
               {segmentsLink.isError && (
                 <div className="explore-ngl-error">
@@ -680,9 +696,7 @@ export function FeatureExplorer() {
                   setSelTable(ids.length > 0 ? ids.join(",") : null)
                 }
                 externalSelection={
-                  onlySelected && rowSelectedCellIds.length > 0
-                    ? rowSelectedCellIds
-                    : null
+                  limitToCellIds.length > 0 ? limitToCellIds : null
                 }
               />
             </div>
