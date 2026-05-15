@@ -624,50 +624,52 @@ export function FeatureExplorer() {
           </button>
           {tableOpen && enrichedCells && enrichedCells.rows.length > 0 && (
             <div className="explore-drawer-body">
-              <div className="explore-drawer-toolbar">
-                <button
-                  type="button"
-                  className="explore-toolbar-btn"
-                  disabled={rowSelectedCellIds.length === 0}
-                  title={
-                    rowSelectedCellIds.length === 0
-                      ? "Select some rows first, then snapshot the selection into the visible set"
-                      : `Snapshot ${rowSelectedCellIds.length} selected cells as the visible set — the table narrows to these and stays stable while you modify the selection`
-                  }
-                  onClick={() => setLimitTo(rowSelectedCellIds.join(","))}
-                >
-                  Limit visible to selection
-                  {rowSelectedCellIds.length > 0 && (
-                    <span className="explore-toolbar-btn-count">
-                      &nbsp;({rowSelectedCellIds.length})
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="explore-toolbar-btn"
-                  disabled={limitToCellIds.length === 0}
-                  title={
-                    limitToCellIds.length === 0
-                      ? "Nothing limiting the visible set right now"
-                      : "Drop the snapshot — table returns to the full filter scope"
-                  }
-                  onClick={() => setLimitTo(null)}
-                >
-                  Reset visible
-                </button>
-                {limitToCellIds.length > 0 && (
-                  <span className="explore-toolbar-hint">
-                    visible limited to {limitToCellIds.length.toLocaleString()} snapshotted cells
-                  </span>
-                )}
-              </div>
               {segmentsLink.isError && (
                 <div className="explore-ngl-error">
                   NGL link failed: {String(segmentsLink.error)}
                 </div>
               )}
               <PartnersTable
+                extraActions={
+                  <>
+                    <button
+                      type="button"
+                      className="explore-toolbar-btn"
+                      disabled={rowSelectedCellIds.length === 0}
+                      title={
+                        rowSelectedCellIds.length === 0
+                          ? "Select some rows first, then snapshot the selection into the visible set"
+                          : `Snapshot ${rowSelectedCellIds.length} selected cells as the visible set — the table narrows to these and stays stable while you modify the selection`
+                      }
+                      onClick={() => setLimitTo(rowSelectedCellIds.join(","))}
+                    >
+                      Limit visible to selection
+                      {rowSelectedCellIds.length > 0 && (
+                        <span className="explore-toolbar-btn-count">
+                          &nbsp;({rowSelectedCellIds.length})
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="explore-toolbar-btn"
+                      disabled={limitToCellIds.length === 0}
+                      title={
+                        limitToCellIds.length === 0
+                          ? "Nothing limiting the visible set right now"
+                          : "Drop the snapshot — table returns to the full filter scope"
+                      }
+                      onClick={() => setLimitTo(null)}
+                    >
+                      Reset visible
+                    </button>
+                    {limitToCellIds.length > 0 && (
+                      <span className="explore-toolbar-hint">
+                        limited to {limitToCellIds.length.toLocaleString()} snapshot
+                      </span>
+                    )}
+                  </>
+                }
                 ds={ds}
                 rootId={ft}
                 matVersion={matVersion}

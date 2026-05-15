@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { isSelKey } from "../plots/urlState";
 import { useSetUrlParams } from "../hooks/useUrlState";
@@ -72,6 +72,12 @@ interface Props {
    *  `/links/segments` with a resolved root_id, distinct from
    *  /neuron's `/links?template=...` partner-frame path. */
   onRowNglClick?: (rowId: string) => void;
+  /** Optional slot rendered inside the action bar (the row above the
+   *  table that holds the count, CSV, pagination, Columns menu).
+   *  Used by /explore to mount its "Limit visible to selection" and
+   *  "Reset visible" actions in the same bar as the count and CSV
+   *  controls, instead of in a separate toolbar above the table. */
+  extraActions?: ReactNode;
 }
 
 // Column key may be `<table>.<col>` (decoration table) or just `<col>` (intrinsic /
@@ -177,7 +183,7 @@ function csvCell(value: unknown): string {
   return s;
 }
 
-export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnGroups, decorationTables, defaultHiddenColumns, externalSelection, onClearSelection, labelOverrides, keyColumn = "root_id", crossNavHref, enableNglAction = true, rowsLabel = "partners", selectedIds, onSelectedIdsChange, onRowNglClick }: Props) {
+export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnGroups, decorationTables, defaultHiddenColumns, externalSelection, onClearSelection, labelOverrides, keyColumn = "root_id", crossNavHref, enableNglAction = true, rowsLabel = "partners", selectedIds, onSelectedIdsChange, onRowNglClick, extraActions }: Props) {
   const [searchParams] = useSearchParams();
   const setUrlParams = useSetUrlParams();
   const makeLink = useMakeLinkMutation();
@@ -736,6 +742,12 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
         </div>
       )}
       <div className="actions">
+        {/* Caller-provided slot — explorer mounts its "Limit visible
+            to selection" / "Reset visible" actions here so they sit
+            with the rest of the table-view controls (count, CSV,
+            pagination, Columns) rather than in a separate toolbar
+            above the table. */}
+        {extraActions}
         {/* NGL action bar (bulk + per-direction) is partner-frame specific.
             Explorer disables via enableNglAction=false; the counter and
             CSV controls still render so the action bar isn't empty. */}
