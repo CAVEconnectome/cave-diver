@@ -159,22 +159,23 @@ export function useCellList(args: CellListArgs | null) {
         ]
       : ["feature_cells", "disabled"],
     queryFn: () =>
+      // POST rather than GET — sel_cell_ids can run into the tens of
+      // thousands of ids on a large lasso, which overflows Node's
+      // default 8KB request-header limit when it rides in a query
+      // string. Body has no such limit.
       apiFetch<FeatureTableCellsResponse>(PATHS.cells(args!.ds, args!.featureTableId), {
-        query: {
+        method: "POST",
+        body: {
           mat_version:
             args!.matVersion === "live"
               ? "live"
               : args!.matVersion === null || args!.matVersion === undefined
                 ? undefined
-                : String(args!.matVersion),
-          dec: args!.decorationTables?.length
-            ? args!.decorationTables.join(",")
-            : undefined,
+                : args!.matVersion,
+          dec: args!.decorationTables?.length ? args!.decorationTables : undefined,
           cells: args!.cells || undefined,
-          sel_cell_ids: args!.selCellIds?.length
-            ? args!.selCellIds.join(",")
-            : undefined,
-          limit: args!.limit ? String(args!.limit) : undefined,
+          sel_cell_ids: args!.selCellIds?.length ? args!.selCellIds : undefined,
+          limit: args!.limit,
         },
       }),
     enabled: !!args && !!args.ds && !!args.featureTableId,

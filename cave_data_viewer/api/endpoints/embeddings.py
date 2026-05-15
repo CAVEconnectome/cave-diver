@@ -399,7 +399,7 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
 
 @bp.route(
     "/<ds>/feature_tables/<feature_table_id>/cells",
-    methods=["GET"],
+    methods=["POST"],
 )
 @auth_required
 def cells(ds: str, feature_table_id: str):
@@ -409,30 +409,24 @@ def cells(ds: str, feature_table_id: str):
     ``PartnersTable`` consumes, so the same component renders both
     ``/neuron``'s partners and ``/explore``'s cells.
 
-    Query params:
+    **POST** rather than GET — the optional ``sel_cell_ids`` field
+    can be a list of tens of thousands of ints (large lasso). Carrying
+    that in a query string overflows Node's default 8KB request-header
+    limit. Body is JSON.
 
-    - ``mat_version`` — drives the resolver for any decoration joins.
-      Required when ``dec`` is non-empty.
-    - ``dec`` — comma-separated decoration table names to join onto the
-      frame. Same syntax as ``/connectivity``'s ``dec``.
+    Body fields (all optional):
+
+    - ``mat_version`` — int or ``"live"``. Required only when ``dec``
+      is non-empty (drives the cell_id → root_id resolver).
+    - ``dec`` — list of decoration table names to join onto the frame.
     - ``cells`` — filter expression, same syntax as the partners
-      endpoints (``<table>.<col>:<op>:<val>[,...]``). Filters reference
-      either parquet columns or attached decoration columns.
-    - ``limit`` — server-side cap on returned rows. Defaults to a high
-      enough value to fit a feature table (~few hundred thousand rows)
-      while keeping the response under JSON-encoder time pressure.
+      endpoints (``<table>.<col>:<op>:<val>[,...]``).
+    - ``sel_cell_ids`` — explicit cell_id subset (universe-scatter
+      lasso). ANDed with the filter expression after the frame is
+      built. Empty / absent = no constraint.
+    - ``limit`` — server-side cap on returned rows.
 
-    Response::
-
-        {
-          "cell_ids": [...],     (echo of primary key column for convenience)
-          "rows": [{cell_id, ...parquet/decoration columns...}, ...],
-          "column_groups": [...PartnerRecord-style groups...],
-          "matched_count": N,    (post-filter)
-          "total_count": M,      (pre-filter; for "N of M" indicator)
-          "limit": L,
-          "limit_hit": bool
-        }
+    Response shape unchanged from the previous GET version.
     """
     cfg = load_datastack_config(ds)
     src = source_for(ds, cfg)
@@ -447,7 +441,9 @@ def cells(ds: str, feature_table_id: str):
     except KeyError as exc:
         raise ApiError(404, "feature_table_not_found", str(exc)) from exc
 
-    mat_version_raw = request.args.get("mat_version")
+    body = request.get_json(silent=True) or {}
+
+    mat_version_raw = body.get("mat_version")
     mat_version: int | str | None
     if mat_version_raw is None or mat_version_raw == "":
         mat_version = None
@@ -456,19 +452,23 @@ def cells(ds: str, feature_table_id: str):
     else:
         try:
             mat_version = int(mat_version_raw)
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             raise ApiError(
                 422, "invalid_mat_version",
                 f"mat_version must be an integer or 'live', got {mat_version_raw!r}",
             ) from exc
 
     decoration_tables: list[str] = []
-    dec_raw = request.args.get("dec") or ""
-    if dec_raw:
-        decoration_tables = [t.strip() for t in dec_raw.split(",") if t.strip()]
+    dec_body = body.get("dec")
+    if isinstance(dec_body, list):
+        decoration_tables = [str(t).strip() for t in dec_body if str(t).strip()]
+    elif isinstance(dec_body, str) and dec_body:
+        # Tolerate the legacy comma-separated string shape so an older
+        # caller doesn't immediately break.
+        decoration_tables = [t.strip() for t in dec_body.split(",") if t.strip()]
 
     try:
-        cell_filters = _parse_cells_param(request.args.get("cells"))
+        cell_filters = _parse_cells_param(body.get("cells"))
     except ValueError as exc:
         raise ApiError(422, "cells_invalid", str(exc)) from exc
     # Auto-extend decoration_tables to cover every table referenced by a
@@ -482,21 +482,27 @@ def cells(ds: str, feature_table_id: str):
         if f.table not in decoration_tables:
             decoration_tables.append(f.table)
 
-    # Lasso selection — caller passes the explicit cell_id list from
-    # the universe scatter's ?sel_universe= URL key. ANDed with the
-    # filter expression after the frame is built. Empty / absent = no
-    # constraint. Large lassos (>~5k cell_ids) approach common URL
-    # length limits; we accept up to 50k here and rely on the caller
-    # to stay within request-size limits.
-    sel_cell_ids_raw = request.args.get("sel_cell_ids") or ""
+    # Lasso selection — accepted as either a JSON list of ints/strings
+    # (preferred for big lassos) or a comma-separated string (legacy
+    # query-shape compat). ANDed with the filter expression after the
+    # frame is built. Empty / absent = no constraint.
+    sel_raw = body.get("sel_cell_ids")
     sel_cell_ids: set[int] | None = None
-    if sel_cell_ids_raw:
+    if isinstance(sel_raw, list):
         try:
-            sel_cell_ids = {int(c) for c in sel_cell_ids_raw.split(",") if c}
+            sel_cell_ids = {int(c) for c in sel_raw if c is not None and c != ""}
+        except (TypeError, ValueError) as exc:
+            raise ApiError(
+                422, "invalid_sel_cell_ids",
+                f"sel_cell_ids must be a list of integer-compatible values: {exc}",
+            ) from exc
+    elif isinstance(sel_raw, str) and sel_raw:
+        try:
+            sel_cell_ids = {int(c) for c in sel_raw.split(",") if c}
         except ValueError as exc:
             raise ApiError(
                 422, "invalid_sel_cell_ids",
-                f"sel_cell_ids must be a comma-separated integer list: {exc}",
+                f"sel_cell_ids string must be a comma-separated integer list: {exc}",
             ) from exc
 
     # check_live_allowed + mat_version are only meaningful when we'll
@@ -515,8 +521,8 @@ def cells(ds: str, feature_table_id: str):
             raise ApiError(422, "live_mode_disallowed", str(exc)) from exc
 
     try:
-        limit = int(request.args.get("limit", "500000"))
-    except ValueError as exc:
+        limit = int(body.get("limit", 500000))
+    except (TypeError, ValueError) as exc:
         raise ApiError(
             422, "invalid_limit", f"limit must be an integer: {exc}"
         ) from exc
