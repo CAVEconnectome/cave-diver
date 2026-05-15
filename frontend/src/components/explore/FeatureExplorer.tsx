@@ -21,6 +21,91 @@ import type { PartnerRecord } from "../../api/types";
  *  filter result is meaningful as a sample, not as a full enumeration. */
 const NGL_LINK_CAP = 500;
 
+interface ClearPillProps {
+  label: string;
+  /** True when there's something to clear. Drives the active vs greyed
+   *  visual. */
+  active: boolean;
+  onClear: () => void;
+  /** Pill color variant — "lasso" reads orange (matches the scatter
+   *  highlight); "rowsel" reads blue (matches row-checkbox semantics). */
+  variant: "lasso" | "rowsel";
+}
+
+function ClearPill({ label, active, onClear, variant }: ClearPillProps) {
+  return (
+    <span
+      role="button"
+      className={`explore-clear-pill explore-clear-pill-${variant}${
+        active ? "" : " disabled"
+      }`}
+      aria-disabled={!active}
+      title={active ? `Clear the active ${label}` : `No active ${label} to clear`}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!active) return;
+        onClear();
+      }}
+    >
+      × clear {label}
+    </span>
+  );
+}
+
+interface NglActionPillProps {
+  label: string;
+  count: number;
+  disabled: boolean;
+  liveDisabled: boolean;
+  onOpen: () => void;
+}
+
+/** Pill-shaped NGL action button used in the drawer header. Lives
+ *  next to the count + clear-pills so the user finds all the
+ *  "current cell set" actions in one place. Always rendered (even
+ *  when its action isn't available) so the user knows the feature
+ *  exists — disabled state vs missing element is a clearer signal
+ *  than a button popping in only when conditions align.
+ *
+ *  Tooltip explains why the button is disabled: empty set vs live
+ *  mode vs pending request.
+ */
+function NglActionPill({
+  label,
+  count,
+  disabled,
+  liveDisabled,
+  onOpen,
+}: NglActionPillProps) {
+  const sampled = Math.min(count, NGL_LINK_CAP);
+  const title = liveDisabled
+    ? "Switch to a materialized version to open in Neuroglancer"
+    : count === 0
+      ? `No ${label} cells to open`
+      : count > NGL_LINK_CAP
+        ? `Open a random sample of ${NGL_LINK_CAP} cells from the ${count.toLocaleString()} ${label}`
+        : `Open ${count.toLocaleString()} ${label} cells in Neuroglancer`;
+  return (
+    <span
+      role="button"
+      className={`explore-ngl-pill${disabled ? " disabled" : ""}`}
+      aria-disabled={disabled}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (disabled) return;
+        onOpen();
+      }}
+    >
+      ↗ {label} ({sampled.toLocaleString()}
+      {count > NGL_LINK_CAP && (
+        <>/{count.toLocaleString()}</>
+      )}
+      )
+    </span>
+  );
+}
+
 /** Random sub-sample of `arr` of size `cap`, preserving original order.
  *  Reservoir sampling: O(n) single-pass, uniform without replacement.
  *  Returns the full array unchanged when it's already at-or-below cap. */
@@ -475,63 +560,54 @@ export function FeatureExplorer() {
                 ""
               )}
             </span>
-            {selUniverseRaw && (
-              <span
-                role="button"
-                className="explore-clear-lasso"
-                onClick={(e) => {
-                  // Stop propagation so clicking "clear" doesn't also
-                  // toggle the drawer.
-                  e.stopPropagation();
-                  setSelUniverse(null);
-                }}
-              >
-                clear lasso
-              </span>
-            )}
-            {rowSelectedCellIds.length > 0 && (
-              <span
-                role="button"
-                className="explore-clear-rowsel"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelTable(null);
-                }}
-              >
-                clear selection ({rowSelectedCellIds.length})
-              </span>
-            )}
-            {/* Contextual "open in NGL" — operates on whatever the
-                scatter is currently highlighting (row-sel if set,
-                else filter ∩ lasso). Lives in the handle strip so
-                it stays accessible whether the drawer is open or
-                collapsed; the body's two explicit buttons (visible /
-                selected) are still there for power-user clarity. */}
-            {highlightedCellIds &&
-              highlightedCellIds.size > 0 &&
-              matVersion !== "live" && (
-                <span
-                  role="button"
-                  className="explore-ngl-pill"
-                  aria-disabled={segmentsLink.isPending}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (segmentsLink.isPending) return;
-                    openInNgl(Array.from(highlightedCellIds));
-                  }}
-                  title={
-                    highlightedCellIds.size > NGL_LINK_CAP
-                      ? `Open a random sample of ${NGL_LINK_CAP} cells from the ${highlightedCellIds.size.toLocaleString()} highlighted`
-                      : `Open ${highlightedCellIds.size} highlighted cells in Neuroglancer`
-                  }
-                >
-                  ↗ open {Math.min(highlightedCellIds.size, NGL_LINK_CAP)}
-                  {highlightedCellIds.size > NGL_LINK_CAP && (
-                    <>&nbsp;of {highlightedCellIds.size.toLocaleString()}</>
-                  )}{" "}
-                  in NGL
-                </span>
-              )}
+            {/* NGL actions — grouped on the left side with the
+                count and selection context (where filtering and
+                selection actually happen). Both buttons are always
+                rendered; "selected" greys out when nothing is row-
+                selected so the user can see the action exists even
+                when it's not actionable. Live mode disables both. */}
+            <NglActionPill
+              label="visible"
+              count={cellList.data?.matched_count ?? 0}
+              disabled={
+                !cellList.data ||
+                cellList.data.matched_count === 0 ||
+                matVersion === "live" ||
+                segmentsLink.isPending
+              }
+              liveDisabled={matVersion === "live"}
+              onOpen={() =>
+                cellList.data && openInNgl(cellList.data.cell_ids)
+              }
+            />
+            <NglActionPill
+              label="selected"
+              count={rowSelectedCellIds.length}
+              disabled={
+                rowSelectedCellIds.length === 0 ||
+                matVersion === "live" ||
+                segmentsLink.isPending
+              }
+              liveDisabled={matVersion === "live"}
+              onOpen={() => openInNgl(rowSelectedCellIds)}
+            />
+            {/* Clear pills paired together — conceptually similar
+                ("undo the narrow") and visually grouped. Both always
+                rendered; greyed when nothing to clear. Separator
+                before them sets a visual break from the NGL actions. */}
+            <span className="explore-pill-separator" aria-hidden />
+            <ClearPill
+              label="lasso"
+              active={!!selUniverseRaw}
+              onClear={() => setSelUniverse(null)}
+              variant="lasso"
+            />
+            <ClearPill
+              label="selection"
+              active={rowSelectedCellIds.length > 0}
+              onClear={() => setSelTable(null)}
+              variant="rowsel"
+            />
           </button>
           {tableOpen && enrichedCells && enrichedCells.rows.length > 0 && (
             <div className="explore-drawer-body">
