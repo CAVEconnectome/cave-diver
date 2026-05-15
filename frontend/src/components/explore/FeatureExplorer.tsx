@@ -10,7 +10,29 @@ import {
   useSetUrlParams,
   useUrlParam,
 } from "../../hooks/useUrlState";
+import { useMakeSegmentsLinkMutation } from "../../api/queries";
 import type { PartnerRecord } from "../../api/types";
+
+/** Hard cap on the cells handed to /links/segments at once. The server
+ *  allows up to 1000; the explorer caps lower (500) because Neuroglancer
+ *  itself starts feeling sluggish past a few hundred segments and the
+ *  user rarely needs more for a "look at this group" workflow. Sets
+ *  above the cap get randomly sub-sampled — `Open in NGL` on a 50k
+ *  filter result is meaningful as a sample, not as a full enumeration. */
+const NGL_LINK_CAP = 500;
+
+/** Random sub-sample of `arr` of size `cap`, preserving original order.
+ *  Reservoir sampling: O(n) single-pass, uniform without replacement.
+ *  Returns the full array unchanged when it's already at-or-below cap. */
+function randomSubsample<T>(arr: T[], cap: number): T[] {
+  if (arr.length <= cap) return arr;
+  const out = arr.slice(0, cap);
+  for (let i = cap; i < arr.length; i++) {
+    const j = Math.floor(Math.random() * (i + 1));
+    if (j < cap) out[j] = arr[i];
+  }
+  return out;
+}
 import { CellFilterPanel } from "../CellFilterPanel";
 import { PartnersTable } from "../PartnersTable";
 import { ChannelPicker } from "./ChannelPicker";
@@ -222,6 +244,35 @@ export function FeatureExplorer() {
     }
     return m;
   }, [resolveQuery.data]);
+
+  // Helper: project a cell_id list through the resolver map and
+  // discard unresolved ids. Used by both NGL buttons.
+  const resolveRoots = (cellIds: string[]): string[] => {
+    const out: string[] = [];
+    for (const cid of cellIds) {
+      const root = rootByCellId.get(cid);
+      if (root) out.push(root);
+    }
+    return out;
+  };
+
+  const segmentsLink = useMakeSegmentsLinkMutation();
+  const openInNgl = async (cellIds: string[]) => {
+    if (matVersion === "live" || !ds) return;
+    const roots = resolveRoots(cellIds);
+    if (roots.length === 0) return;
+    const sampled = randomSubsample(roots, NGL_LINK_CAP);
+    try {
+      const result = await segmentsLink.mutateAsync({
+        ds,
+        matVersion,
+        rootIds: sampled,
+      });
+      window.open(result.url, "_blank");
+    } catch {
+      // Error surfaces via segmentsLink.isError below the buttons.
+    }
+  };
 
   // Enrich cellList rows with the resolved root_id so PartnersTable's
   // existing rendering machinery picks it up like any other column.
@@ -438,9 +489,72 @@ export function FeatureExplorer() {
                 clear lasso
               </span>
             )}
+            {rowSelectedCellIds.length > 0 && (
+              <span
+                role="button"
+                className="explore-clear-rowsel"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelTable(null);
+                }}
+              >
+                clear selection ({rowSelectedCellIds.length})
+              </span>
+            )}
           </button>
           {tableOpen && enrichedCells && enrichedCells.rows.length > 0 && (
             <div className="explore-drawer-body">
+              <div className="explore-drawer-actions">
+                <button
+                  type="button"
+                  className="explore-ngl-btn"
+                  onClick={() => openInNgl(enrichedCells.rows.map((r) => String(r.cell_id)))}
+                  disabled={
+                    segmentsLink.isPending ||
+                    matVersion === "live" ||
+                    resolveRoots(enrichedCells.rows.map((r) => String(r.cell_id))).length === 0
+                  }
+                  title={
+                    matVersion === "live"
+                      ? "Switch to a materialized version to open in Neuroglancer"
+                      : `Open up to ${NGL_LINK_CAP} visible cells (random sample if more)`
+                  }
+                >
+                  Open visible in NGL
+                  {enrichedCells.rows.length > NGL_LINK_CAP && (
+                    <span className="explore-ngl-sample">
+                      &nbsp;(sample of {NGL_LINK_CAP})
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="explore-ngl-btn"
+                  onClick={() => openInNgl(rowSelectedCellIds)}
+                  disabled={
+                    rowSelectedCellIds.length === 0 ||
+                    segmentsLink.isPending ||
+                    matVersion === "live"
+                  }
+                  title={
+                    rowSelectedCellIds.length === 0
+                      ? "Select rows first"
+                      : `Open ${Math.min(rowSelectedCellIds.length, NGL_LINK_CAP)} selected cells in Neuroglancer`
+                  }
+                >
+                  Open selected ({rowSelectedCellIds.length}) in NGL
+                  {rowSelectedCellIds.length > NGL_LINK_CAP && (
+                    <span className="explore-ngl-sample">
+                      &nbsp;(sample of {NGL_LINK_CAP})
+                    </span>
+                  )}
+                </button>
+                {segmentsLink.isError && (
+                  <span className="explore-ngl-error">
+                    Failed: {String(segmentsLink.error)}
+                  </span>
+                )}
+              </div>
               <PartnersTable
                 ds={ds}
                 rootId={ft}

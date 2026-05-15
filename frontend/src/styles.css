@@ -3312,3 +3312,52 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   height: 60px;
   display: block;
 }
+
+/* ---- Explorer drawer NGL action bar + clear-selection pill ----------- */
+.explore-clear-rowsel {
+  margin-left: 8px;
+  font-size: 11px;
+  padding: 2px 8px;
+  background: rgba(91, 139, 209, 0.12);
+  color: #1d4ed8;
+  border: 1px solid #5b8bd1;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.explore-clear-rowsel:hover { background: rgba(91, 139, 209, 0.22); }
+
+.explore-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.explore-ngl-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  background: var(--panel, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text, #111);
+}
+.explore-ngl-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+.explore-ngl-btn:disabled {
+  color: var(--muted, #9ca3af);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.explore-ngl-sample {
+  font-size: 10px;
+  color: var(--muted, #6b7280);
+  font-style: italic;
+}
+.explore-ngl-error {
+  font-size: 11px;
+  color: #b00020;
+}
