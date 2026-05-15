@@ -3,12 +3,14 @@ import {
   useCellList,
   useEmbeddingList,
   useEmbeddingScatter,
+  useResolveRoots,
 } from "../../api/embeddings";
 import {
   parseMatVersion,
   useSetUrlParams,
   useUrlParam,
 } from "../../hooks/useUrlState";
+import type { PartnerRecord } from "../../api/types";
 import { CellFilterPanel } from "../CellFilterPanel";
 import { PartnersTable } from "../PartnersTable";
 import { ChannelPicker } from "./ChannelPicker";
@@ -173,6 +175,58 @@ export function FeatureExplorer() {
     if (!cellList.data) return null;
     return new Set(cellList.data.cell_ids);
   }, [cells, lassoCellIds, cellList.data]);
+
+  // Batch cell_id → root_id resolution for the visible rows. The
+  // resolver universe-caches per (ds, mv) server-side so a 94k-cell
+  // resolution is a single CAVE round-trip; subsequent requests within
+  // the same mv are dict reads. Disabled in live mode (resolver is
+  // materialization-keyed in v1).
+  const resolveCellIds = cellList.data?.cell_ids ?? [];
+  const resolveQuery = useResolveRoots(
+    ds && ft && matVersion !== "live" && resolveCellIds.length > 0
+      ? {
+          ds,
+          featureTableId: ft,
+          cellIds: resolveCellIds,
+          matVersion,
+        }
+      : null,
+  );
+
+  // Map cell_id → resolved root_id (or null when missing/ambiguous).
+  // Keyed by stringified cell_id to match the wire convention.
+  const rootByCellId = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const r of resolveQuery.data?.resolutions ?? []) {
+      m.set(r.cell_id, r.status === "ok" ? r.root_id : null);
+    }
+    return m;
+  }, [resolveQuery.data]);
+
+  // Enrich cellList rows with the resolved root_id so PartnersTable's
+  // existing rendering machinery picks it up like any other column.
+  // The augmented column_groups carries a "current root" group so the
+  // user can see the resolution alongside cell_id.
+  const enrichedCells = useMemo(() => {
+    if (!cellList.data) return null;
+    // PartnerRecord.root_id is typed as string (non-null) for the
+    // /neuron use case. In /explore the field is a *resolution* —
+    // null is meaningful ("didn't resolve at this mv"). The cast
+    // is safe because the cell-list table renders root_id via the
+    // CopyableId path which handles null; nothing else in the
+    // explorer reads this field as a non-null string.
+    const rows = cellList.data.rows.map((row) => {
+      const cid = String(row.cell_id);
+      return {
+        ...row,
+        root_id: rootByCellId.get(cid) ?? null,
+      };
+    }) as unknown as PartnerRecord[];
+    const groups = cellList.data.column_groups.map((g) =>
+      g.name === "id" ? { ...g, columns: [...g.columns, "root_id"] } : g,
+    );
+    return { rows, column_groups: groups };
+  }, [cellList.data, rootByCellId]);
 
   if (!ds) {
     return (
@@ -365,18 +419,36 @@ export function FeatureExplorer() {
               </span>
             )}
           </button>
-          {tableOpen && cellList.data && cellList.data.rows.length > 0 && (
+          {tableOpen && enrichedCells && enrichedCells.rows.length > 0 && (
             <div className="explore-drawer-body">
               <PartnersTable
                 ds={ds}
                 rootId={ft}
                 matVersion={matVersion}
                 direction="both"
-                rows={cellList.data.rows}
-                columnGroups={cellList.data.column_groups}
+                rows={enrichedCells.rows}
+                columnGroups={enrichedCells.column_groups}
                 decorationTables={decorationTables}
                 keyColumn="cell_id"
-                crossNavHref={() => "#"}
+                // Resolve cell_id → root_id at the active mv. Cells
+                // that didn't resolve (missing / ambiguous / not yet
+                // resolved / live mode) get a "#" href so the link is
+                // visually present but doesn't navigate; the user can
+                // see why in the root_id column (rendered as null).
+                crossNavHref={(cellId) => {
+                  const root = rootByCellId.get(cellId);
+                  if (!root) return "#";
+                  const next = new URLSearchParams();
+                  next.set("ds", ds);
+                  next.set("mv", matVersion === "live" ? "live" : String(matVersion));
+                  next.set("root", root);
+                  next.set("from", `explore:${ft}/${emb}`);
+                  if (decorationTables.length > 0) {
+                    next.set("dec", decorationTables.join(","));
+                  }
+                  if (cells) next.set("cells", cells);
+                  return `/neuron?${next.toString()}`;
+                }}
                 enableNglAction={false}
                 rowsLabel="cells"
               />
