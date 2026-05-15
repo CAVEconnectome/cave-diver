@@ -2875,10 +2875,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .explore-dec-chip-remove:hover { color: #b00020; }
 
 /* ---- Feature Explorer layout (v2) -------------------------------------- */
+/* Cinematic layout: full-bleed scatter, bottom drawer for the table.
+   Left rail (280px) carries pickers/channels/filter; right column is
+   a flex column with the scatter filling and the drawer sliding up
+   from the bottom. */
 .explore {
   display: grid;
   grid-template-columns: 280px 1fr;
-  gap: 16px;
+  gap: 12px;
   padding: 12px;
   height: 100%;
   box-sizing: border-box;
@@ -2892,14 +2896,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .explore-center {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   min-width: 0;
-}
-.universe-scatter {
+  min-height: 0;
   background: var(--panel, #fff);
   border: 1px solid var(--border, #e5e7eb);
   border-radius: 6px;
-  padding: 4px;
+  overflow: hidden;
+}
+.explore-scatter-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
 }
 .universe-scatter.loading,
 .universe-scatter.error,
@@ -2911,28 +2918,65 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 13px;
 }
 .universe-scatter.error { color: #b00020; }
-.explore-cell-list {
+
+/* Drawer — always shows a handle strip; body slides in when open. */
+.explore-drawer {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  border-top: 1px solid var(--border, #e5e7eb);
   min-height: 0;
+  background: white;
+  transition: flex-basis 0.18s ease-out;
 }
-.explore-cell-list-header {
+.explore-drawer.open {
+  flex-basis: 55%;
+}
+.explore-drawer-handle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
   font-size: 13px;
   color: var(--muted, #6b7280);
-  padding: 0 4px;
+  text-align: left;
+  width: 100%;
 }
-.explore-cell-list-header .error { color: #b00020; }
+.explore-drawer-handle:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+.explore-drawer-toggle {
+  font-size: 14px;
+  width: 14px;
+  display: inline-block;
+}
+.explore-drawer-count strong {
+  color: var(--text, #111);
+}
+.explore-drawer-count em {
+  font-style: normal;
+  color: var(--muted, #6b7280);
+}
+.explore-drawer-count .error { color: #b00020; }
 .explore-clear-lasso {
-  font-size: 12px;
+  margin-left: auto;
+  font-size: 11px;
   padding: 2px 8px;
-  background: var(--panel, #fff);
-  border: 1px solid var(--border, #e5e7eb);
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+  border: 1px solid #f59e0b;
   border-radius: 4px;
   cursor: pointer;
+}
+.explore-clear-lasso:hover { background: rgba(245, 158, 11, 0.22); }
+.explore-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 12px;
 }
 
 /* ---- Channel pickers (explorer x/y/color/size) ------------------------- */

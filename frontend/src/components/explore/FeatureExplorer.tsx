@@ -47,6 +47,11 @@ export function FeatureExplorer() {
   const [sizeBinding] = useUrlParam("size");
   const [sizeMinRaw] = useUrlParam("size_min");
   const [sizeMaxRaw] = useUrlParam("size_max");
+  // Drawer state for the cell-list table. Closed by default so the
+  // scatter owns the full canvas on first arrival; user clicks the
+  // drawer handle to pull up the table.
+  const [tableRaw, setTable] = useUrlParam("table");
+  const tableOpen = tableRaw === "open";
   // Size range falls back to backend defaults when URL is silent. The
   // values are parsed each render; URL is the source of truth.
   const sizeMinPx = sizeMinRaw ? parseFloat(sizeMinRaw) : 2.0;
@@ -228,78 +233,87 @@ export function FeatureExplorer() {
           sampleRows={cellList.data?.rows}
         />
       </aside>
-      <section className="explore-center">
-        <UniverseScatter
-          ds={ds}
-          featureTableId={ft}
-          embeddingId={emb}
-          x={xBinding}
-          y={yBinding}
-          colorBy={colorBinding}
-          sizeBy={sizeBinding}
-          sizeMinPx={sizeMinPx}
-          sizeMaxPx={sizeMaxPx}
-          decorationTables={decorationTables}
-          matVersion={matVersion}
-          highlightedCellIds={highlightedCellIds}
-          onLassoSelect={(ids) =>
-            setSelUniverse(ids.length > 0 ? ids.join(",") : null)
-          }
-        />
-        <div className="explore-cell-list">
-          <header className="explore-cell-list-header">
-            {cellList.data ? (
-              <span>
-                Showing <strong>{cellList.data.matched_count.toLocaleString()}</strong>
-                {" "}of{" "}
-                <strong>{cellList.data.total_count.toLocaleString()}</strong> cells
-                {cellList.data.limit_hit && (
-                  <em>
-                    {" "}— capped at {cellList.data.limit.toLocaleString()} rows
-                  </em>
-                )}
-              </span>
-            ) : cellList.isLoading ? (
-              <span>Loading cells…</span>
-            ) : cellList.isError ? (
-              <span className="error">Failed: {String(cellList.error)}</span>
-            ) : null}
+      <section className={`explore-center${tableOpen ? " table-open" : ""}`}>
+        <div className="explore-scatter-wrap">
+          <UniverseScatter
+            ds={ds}
+            featureTableId={ft}
+            embeddingId={emb}
+            x={xBinding}
+            y={yBinding}
+            colorBy={colorBinding}
+            sizeBy={sizeBinding}
+            sizeMinPx={sizeMinPx}
+            sizeMaxPx={sizeMaxPx}
+            decorationTables={decorationTables}
+            matVersion={matVersion}
+            highlightedCellIds={highlightedCellIds}
+            onLassoSelect={(ids) =>
+              setSelUniverse(ids.length > 0 ? ids.join(",") : null)
+            }
+          />
+        </div>
+        {/* Drawer: handle always visible; body only when open. */}
+        <div className={`explore-drawer${tableOpen ? " open" : ""}`}>
+          <button
+            type="button"
+            className="explore-drawer-handle"
+            onClick={() => setTable(tableOpen ? null : "open")}
+            aria-expanded={tableOpen}
+          >
+            <span className="explore-drawer-toggle">{tableOpen ? "▾" : "▴"}</span>
+            <span className="explore-drawer-count">
+              {cellList.data ? (
+                <>
+                  <strong>{cellList.data.matched_count.toLocaleString()}</strong>
+                  {" of "}
+                  <strong>{cellList.data.total_count.toLocaleString()}</strong>
+                  {" cells"}
+                  {cellList.data.limit_hit && (
+                    <em>
+                      {" "}— capped at {cellList.data.limit.toLocaleString()}
+                    </em>
+                  )}
+                </>
+              ) : cellList.isLoading ? (
+                "Loading cells…"
+              ) : cellList.isError ? (
+                <span className="error">Failed: {String(cellList.error)}</span>
+              ) : (
+                ""
+              )}
+            </span>
             {selUniverseRaw && (
-              <button
-                type="button"
+              <span
+                role="button"
                 className="explore-clear-lasso"
-                onClick={() => setSelUniverse(null)}
+                onClick={(e) => {
+                  // Stop propagation so clicking "clear" doesn't also
+                  // toggle the drawer.
+                  e.stopPropagation();
+                  setSelUniverse(null);
+                }}
               >
-                Clear lasso selection
-              </button>
+                clear lasso
+              </span>
             )}
-          </header>
-          {cellList.data && cellList.data.rows.length > 0 && (
-            <PartnersTable
-              ds={ds}
-              // PartnersTable currently requires a rootId for CSV
-              // filename + breadcrumb stamping. The explorer has no
-              // focal root; pass the feature_table id so the CSV is
-              // labeled meaningfully and any default-href construction
-              // (which we suppress below via crossNavHref) has a sane
-              // fallback.
-              rootId={ft}
-              matVersion={matVersion}
-              direction="both"
-              rows={cellList.data.rows}
-              columnGroups={cellList.data.column_groups}
-              decorationTables={decorationTables}
-              keyColumn="cell_id"
-              // Cross-nav from cell-list rows is deferred until the
-              // explorer→neuron resolver hop is wired (next batch).
-              // For now make the cross-nav arrow a no-op anchor.
-              crossNavHref={() => "#"}
-              // NGL action + bulk NGL action bar depend on a focal-row
-              // root_id which doesn't exist for cell-id rows; disable
-              // until a generic ids-as-segments /links template lands.
-              enableNglAction={false}
-              rowsLabel="cells"
-            />
+          </button>
+          {tableOpen && cellList.data && cellList.data.rows.length > 0 && (
+            <div className="explore-drawer-body">
+              <PartnersTable
+                ds={ds}
+                rootId={ft}
+                matVersion={matVersion}
+                direction="both"
+                rows={cellList.data.rows}
+                columnGroups={cellList.data.column_groups}
+                decorationTables={decorationTables}
+                keyColumn="cell_id"
+                crossNavHref={() => "#"}
+                enableNglAction={false}
+                rowsLabel="cells"
+              />
+            </div>
           )}
         </div>
       </section>

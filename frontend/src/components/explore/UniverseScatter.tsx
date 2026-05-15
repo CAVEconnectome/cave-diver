@@ -38,6 +38,9 @@ interface Props {
   onLassoSelect?: (cellIds: string[]) => void;
   /** Called when the user clicks a single point. */
   onPointClick?: (cellId: string) => void;
+  /** Optional fixed height. When unset, the component fills its
+   *  parent (use this in flex layouts where the parent owns sizing).
+   *  Required when the parent has no intrinsic height. */
   height?: number;
 }
 
@@ -135,7 +138,7 @@ export function UniverseScatter({
   highlightedCellIds,
   onLassoSelect,
   onPointClick,
-  height = 480,
+  height,
 }: Props) {
   // Tool state — pan or lasso. Default pan so the very first
   // interaction (explore the universe) feels right. Toggle in the
@@ -190,27 +193,63 @@ export function UniverseScatter({
     [query.data, highlightedCellIds, extent],
   );
 
+  // Measure the container so the initial fit uses the actual canvas
+  // height (which can be smaller or larger than any fixed prop the
+  // parent passed). ResizeObserver fires whenever the container's
+  // dimensions change (e.g. when a sibling drawer opens). We track
+  // measured height in a ref so subsequent resizes don't snap the
+  // user's pan/zoom — only the initial fit (and explicit "fit view"
+  // requests) re-compute zoom from height.
+  const [measuredHeight, setMeasuredHeight] = useState(0);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0].contentRect.height;
+      setMeasuredHeight(h);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Initial view state — fit the unit square into the canvas with a
   // small padding margin. Independent of `extent` because the data is
   // pre-normalized; pan/zoom write back through `onViewStateChange`
-  // after the initial fit. Re-fits when the axes change (binding swap)
-  // or the container resizes — NOT on color/size/highlight changes,
-  // which would yank the user's view back to default every time they
-  // touched a channel.
+  // after the initial fit. Re-fits only when the axes change (binding
+  // swap) or on first data load — NOT on color/size/highlight/
+  // container-resize, which would yank the user's view away.
   const [viewState, setViewState] = useState<{
     target: [number, number, number];
     zoom: number;
   } | null>(null);
   const axesKey = `${query.data?.axes.x ?? ""}/${query.data?.axes.y ?? ""}`;
   const dataReady = !!query.data;
+  // `heightForFit` is the latest measured height; used inside the fit
+  // effect but not a dep (changes don't trigger re-fit on container
+  // resize). When measured is 0 (not measured yet) we fall back to
+  // the prop or a sensible default.
+  const heightForFitRef = useRef<number>(height ?? 480);
+  if (measuredHeight > 0) heightForFitRef.current = measuredHeight;
+  else if (height) heightForFitRef.current = height;
   useEffect(() => {
     if (!dataReady) return;
-    setViewState(unitSquareViewState(height));
-    // Deps: axesKey (axis-channel swap), dataReady (first load), height
-    // (container resize). Notably absent: query.data, extent — those
-    // change identity on every response (new color/size/etc.) but
-    // shouldn't reset the user's pan/zoom.
-  }, [axesKey, dataReady, height]);
+    setViewState(unitSquareViewState(heightForFitRef.current));
+  }, [axesKey, dataReady]);
+  // Separate effect: when we get our first non-zero measurement,
+  // re-fit. Avoids the "fit zoom based on 0px height" race on initial
+  // render before ResizeObserver has fired.
+  const firstMeasureRef = useRef(false);
+  useEffect(() => {
+    if (measuredHeight <= 0) return;
+    if (firstMeasureRef.current) return;
+    firstMeasureRef.current = true;
+    if (!dataReady) return;
+    setViewState(unitSquareViewState(measuredHeight));
+  }, [measuredHeight, dataReady]);
+
+  const fitView = useCallback(() => {
+    setViewState(unitSquareViewState(heightForFitRef.current));
+  }, []);
 
   const layers = useMemo(() => {
     if (!partition) return [];
@@ -390,7 +429,13 @@ export function UniverseScatter({
     <div
       className="universe-scatter"
       ref={containerRef}
-      style={{ position: "relative", height }}
+      style={{
+        position: "relative",
+        // Fixed height when the parent specifies one; otherwise fill
+        // the parent (flex layouts own sizing).
+        height: height ? `${height}px` : "100%",
+        width: "100%",
+      }}
     >
       <DeckGL
         views={new OrthographicView({ id: "ortho" })}
@@ -442,7 +487,7 @@ export function UniverseScatter({
           </svg>
         )}
       </div>
-      {/* Tool toggle — top-right, pan vs lasso. */}
+      {/* Tool toggle — top-right, pan vs lasso, plus a fit-view shortcut. */}
       <div className="universe-toolbar">
         <button
           type="button"
@@ -459,6 +504,13 @@ export function UniverseScatter({
           title="Lasso to select"
         >
           ⌒ lasso
+        </button>
+        <button
+          type="button"
+          onClick={fitView}
+          title="Fit view to data"
+        >
+          ⤢ fit
         </button>
       </div>
       {/* Hover tooltip. Anchored to the canvas position deck.gl reports
