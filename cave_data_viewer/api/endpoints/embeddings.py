@@ -226,14 +226,17 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
 
     # Auto-extend decoration_tables to cover any channel that references
     # a non-feature-table table. Channels that reference the feature_table
-    # itself read from the prefixed parquet columns natively.
+    # itself read from the prefixed parquet columns natively; channels
+    # that reference the synthetic `nucleus.*` columns (added by
+    # FeatureTableQuery.frame() from the universe cache) are also
+    # native — no decoration join needed.
     for col in (x_col, y_col, color_col, size_col):
         if not col:
             continue
         if "." not in col:
             continue
         table = col.split(".", 1)[0]
-        if table == ft.id:
+        if table == ft.id or table == "nucleus":
             continue
         if table not in decoration_tables:
             decoration_tables.append(table)
@@ -265,7 +268,11 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
         mat_version=mat_version,
         feature_table=ft,
         cfg=cfg,
-        client_factory=_client_factory if decoration_tables else None,
+        # Always pass client_factory — lazy; only triggers a CAVE call
+        # when frame() actually needs the resolver (decoration join
+        # OR nucleus position enrichment). Parquet-only paths still
+        # pay nothing.
+        client_factory=_client_factory,
     )
     frame = ft_query.frame(decoration_tables=decoration_tables or None)
 
@@ -457,10 +464,11 @@ def cells(ds: str, feature_table_id: str):
     # Auto-extend decoration_tables to cover every table referenced by a
     # cell filter — the user's intent is "filter by these columns"; they
     # shouldn't also have to remember to attach the table. Clauses that
-    # reference the feature_table itself are skipped — those columns are
-    # parquet columns that live on the frame natively, no join needed.
+    # reference the feature_table itself OR the synthetic `nucleus.*`
+    # columns are skipped — those columns live on the frame natively,
+    # no decoration join needed.
     for f in cell_filters:
-        if f.table == feature_table_id:
+        if f.table == feature_table_id or f.table == "nucleus":
             continue
         if f.table not in decoration_tables:
             decoration_tables.append(f.table)
@@ -519,12 +527,17 @@ def cells(ds: str, feature_table_id: str):
             materialize_version=mat_version,
         )
 
+    # Always pass client_factory — it's lazy and only invokes the CAVE
+    # client when something actually needs it. Two paths inside frame()
+    # use it: decoration joins (only when decoration_tables is non-
+    # empty) and nucleus position enrichment (only when mat_version is
+    # materialized). Cells endpoints without either still pay nothing.
     ft_query = FeatureTableQuery(
         datastack=ds,
         mat_version=mat_version,
         feature_table=ft,
         cfg=cfg,
-        client_factory=_client_factory if decoration_tables else None,
+        client_factory=_client_factory,
     )
     frame = ft_query.frame(decoration_tables=decoration_tables or None)
     total_count = int(len(frame))
@@ -583,6 +596,17 @@ def cells(ds: str, feature_table_id: str):
     if parquet_cols:
         column_groups.append(
             {"name": ft.id, "kind": "table", "columns": parquet_cols}
+        )
+    # Synthetic nucleus position columns (added by FeatureTableQuery
+    # from the universe cache). Render as their own group so the
+    # channel pickers and column-visibility menu see them, and the
+    # ?cells= filter picker exposes them.
+    nucleus_cols = [
+        c for c in ("nucleus.x", "nucleus.y", "nucleus.z") if c in frame.columns
+    ]
+    if nucleus_cols:
+        column_groups.append(
+            {"name": "nucleus", "kind": "table", "columns": nucleus_cols}
         )
     for table in decoration_tables:
         cols = [c for c in frame.columns if c.startswith(f"{table}.")]

@@ -1364,10 +1364,20 @@ def resolve_plot(
 
     # Auto-extend decoration_tables to cover every table referenced by a cell
     # filter — the user's intent is "filter by these columns", they shouldn't
-    # also have to remember to load the table.
+    # also have to remember to load the table. Two prefixes are skipped:
+    # the feature_table_id (when source=embedding_cells) carries parquet
+    # columns natively, and the synthetic "nucleus" prefix is added by
+    # FeatureTableQuery from the universe cache — neither is a decoration.
     cell_filters = cell_filters or []
     decoration_tables = list(decoration_tables or [])
+    embedding_ft_id = (
+        ft_query.feature_table.id if ft_query is not None else None
+    )
     for f in cell_filters:
+        if f.table == embedding_ft_id:
+            continue
+        if f.table == "nucleus":
+            continue
         if f.table not in decoration_tables:
             decoration_tables.append(f.table)
 

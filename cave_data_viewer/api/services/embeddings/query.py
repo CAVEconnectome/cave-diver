@@ -116,6 +116,58 @@ class FeatureTableQuery:
         if rename:
             df = df.rename(columns=rename)
 
+        cell_ids = df["cell_id"].astype(int).tolist()
+
+        # Nucleus position enrichment — adds `nucleus.x` / `nucleus.y` /
+        # `nucleus.z` columns (µm) reading from the universe cache. The
+        # positions ride along on the universe fetch the resolver
+        # already performs, so this is "for free" once the resolver
+        # has been hit at the active mat_version. Bundles spatial
+        # axes into the explorer's column space alongside the parquet's
+        # computed features (e.g. soma_depth_y) so the user can plot
+        # nucleus.y vs soma_depth_y, color by nucleus.z, etc.
+        #
+        # Skipped silently when the resolver isn't configured for the
+        # datastack, in live mode (no universe cache), or when no
+        # client_factory was supplied (a pure parquet read).
+        if (
+            self.client_factory is not None
+            and self.mat_version is not None
+            and self.mat_version != "live"
+            and getattr(self.cfg, "cell_id_lookup_view", None)
+        ):
+            try:
+                from ..cell_id import cell_ids_to_positions
+                positions = cell_ids_to_positions(
+                    client=self.client_factory(),
+                    cfg=self.cfg,
+                    mat_version=self.mat_version,
+                    datastack=self.datastack,
+                    cell_ids=cell_ids,
+                )
+                xs: list[float | None] = []
+                ys: list[float | None] = []
+                zs: list[float | None] = []
+                for cid in cell_ids:
+                    pos = positions.get(cid)
+                    if pos is None:
+                        xs.append(None)
+                        ys.append(None)
+                        zs.append(None)
+                    else:
+                        xs.append(pos[0])
+                        ys.append(pos[1])
+                        zs.append(pos[2])
+                df["nucleus.x"] = xs
+                df["nucleus.y"] = ys
+                df["nucleus.z"] = zs
+            except Exception:
+                # Defensive: nucleus position is a convenience, not a
+                # contract. If the universe load fails for any reason
+                # (live mode crept in, CAVE hiccup, etc.), proceed
+                # without it rather than failing the whole request.
+                pass
+
         if not decoration_tables:
             return df
         if self.client_factory is None:
@@ -124,7 +176,6 @@ class FeatureTableQuery:
                 "no client_factory was provided."
             )
 
-        cell_ids = df["cell_id"].astype(int).tolist()
         # Resolve once; reuse across every requested decoration table.
         # The universe cache in services/cell_id.py makes the second-and-
         # subsequent table lookups a free dict read at this mat_version.

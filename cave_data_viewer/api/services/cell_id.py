@@ -53,7 +53,7 @@ changes within a mat_version. So:
 
 import datetime as _dt
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 from cachetools import TTLCache
@@ -113,9 +113,20 @@ class CellUniverse:
     decide). Use it for opportunistic root→cell answers; the
     main+alt-tables path in :func:`root_ids_to_cell_ids` still handles
     root_ids that aren't in the lookup view at all.
+
+    ``cell_to_pos`` is the nucleus position (``pt_position`` from the
+    lookup view) in micrometers per axis. Same key set as
+    ``cell_to_root``; values are ``None`` when the row's position
+    field is missing/null. Populated for free during the universe
+    fetch since the lookup view query returns pt_position anyway —
+    the cost was already paid. Callers reading positions get them as
+    O(1) dict reads, same shape as the root_id lookup.
     """
     cell_to_root: dict[int, int | None]
     root_to_cell: dict[int, int | None]
+    cell_to_pos: dict[int, tuple[float, float, float] | None] = field(
+        default_factory=dict
+    )
 
 
 def clear_caches() -> None:
@@ -147,11 +158,15 @@ def _get_universe(
     # Cache key for the app cache. Includes `view` so different lookup
     # views (a future second namespace per datastack) get distinct
     # entries. Use `cache_datastack` so two datastacks pointing at the
-    # same underlying data share entries.
+    # same underlying data share entries. The `v2` suffix bumps the
+    # key after we extended CellUniverse to include positions — old
+    # cache entries (which lack `cell_to_pos`) get a fresh fetch
+    # rather than partial data; old entries orphan and age out via
+    # GCS lifecycle.
     from .cache_lifecycle import cache_datastack
     cache_ds = cache_datastack(datastack)
     app_cache = _app_universe_cache()
-    app_key = (cache_ds, int(mat_version), view)
+    app_key = (cache_ds, int(mat_version), view, "v2")
 
     if app_cache is not None:
         hit = app_cache.get(app_key)
@@ -160,7 +175,7 @@ def _get_universe(
             return value
 
     # Fallback: module-level cache, used when there's no Flask context.
-    fallback_key = (datastack, int(mat_version), view)
+    fallback_key = (datastack, int(mat_version), view, "v2")
     if app_cache is None:
         with _lock:
             hit_local = _universe_mat.get(fallback_key)
@@ -171,8 +186,15 @@ def _get_universe(
     # ``live_query`` and the lookup view is small (low-six-digits of rows
     # for minnie65 scale; we've never seen a deployment where it pushes
     # CAVE pagination), so a no-filter query is correct + efficient.
+    #
+    # `desired_resolution=[1000, 1000, 1000]` asks CAVE to return
+    # `pt_position` in micrometer units. That puts nucleus positions on
+    # the same scale as the parquet's `soma_depth_y` (also in µm) so
+    # users can plot nucleus.y vs soma_depth_y and have the axes
+    # comparable. Cell ID and root ID values are independent of
+    # `desired_resolution`.
     qf = client.materialize.views[view]()
-    df = qf.query(split_positions=False)
+    df = qf.query(split_positions=False, desired_resolution=[1000, 1000, 1000])
 
     cell_to_root: dict[int, int | None] = {}
     root_counts: dict[int, int] = {}
@@ -198,7 +220,27 @@ def _get_universe(
             else:
                 root_to_cell[rid_i] = None
 
-    universe = CellUniverse(cell_to_root=cell_to_root, root_to_cell=root_to_cell)
+    # Nucleus positions (µm) keyed by cell_id. Same row set as
+    # cell_to_root. Missing/malformed pt_position values land as None
+    # so consumers can distinguish "we know this cell, no position"
+    # from "we don't know this cell at all" (latter = key absent).
+    cell_to_pos: dict[int, tuple[float, float, float] | None] = {}
+    if not df.empty and "pt_position" in df.columns:
+        for cid, pos in zip(df["id"].astype("int64"), df["pt_position"]):
+            cid_i = int(cid)
+            if pos is None or not hasattr(pos, "__len__") or len(pos) < 3:
+                cell_to_pos[cid_i] = None
+                continue
+            try:
+                cell_to_pos[cid_i] = (float(pos[0]), float(pos[1]), float(pos[2]))
+            except (TypeError, ValueError):
+                cell_to_pos[cid_i] = None
+
+    universe = CellUniverse(
+        cell_to_root=cell_to_root,
+        root_to_cell=root_to_cell,
+        cell_to_pos=cell_to_pos,
+    )
 
     # Write back. App cache (shared L1 + L2) is the primary; the
     # module cache only matters when there's no app context.
@@ -315,6 +357,40 @@ def cell_ids_to_root_ids(
 
     out.update(fresh)
     return out
+
+
+def cell_ids_to_positions(
+    *,
+    client,
+    cfg,
+    mat_version: int | str | None,
+    datastack: str,
+    cell_ids: Iterable[int],
+) -> dict[int, tuple[float, float, float] | None]:
+    """Resolve cell_ids → nucleus positions (µm) at a materialized
+    version. Reads from the same universe cache that powers
+    ``cell_ids_to_root_ids`` — positions ride along on every universe
+    fetch, so this is a pure dict lookup once the universe is warm.
+
+    Live mode is not supported in v1 — returns an empty mapping. Live
+    universes change with proofreading; per-cell position queries
+    would be possible but would defeat the universe-cache pattern.
+    """
+    view = cfg.cell_id_lookup_view
+    if not view:
+        raise ValueError("This datastack has no cell_id_lookup_view configured.")
+    cell_ids = [int(x) for x in cell_ids]
+    if not cell_ids:
+        return {}
+    if is_live(mat_version):
+        return {cid: None for cid in cell_ids}
+    universe = _get_universe(
+        client=client,
+        view=view,
+        datastack=datastack,
+        mat_version=int(mat_version),
+    )
+    return {cid: universe.cell_to_pos.get(cid) for cid in cell_ids}
 
 
 def root_ids_to_cell_ids(
