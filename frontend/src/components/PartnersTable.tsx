@@ -48,10 +48,15 @@ interface Props {
    *  partner→/neuron builder; explorer passes a builder that resolves
    *  cell_id → root_id at the current mv before constructing /neuron URL. */
   crossNavHref?: (rowId: string) => string;
-  /** Whether to render the per-row "open in Neuroglancer" action column.
-   *  Defaults true (the partners path always wants it); explorer disables
-   *  it until a generic ids-as-segments /links template lands. */
+  /** Whether to render the per-row "open in Neuroglancer" action column
+   *  AND the bulk "Open in NGL" action bar above the table. Defaults
+   *  true (the partners path always wants both); explorer disables it
+   *  until a generic ids-as-segments /links template lands. */
   enableNglAction?: boolean;
+  /** Noun used in the row counter ("X of Y partners" / "X partners")
+   *  and the CSV filename. Defaults to "partners" so /neuron callers
+   *  are unchanged; explorer passes "cells". */
+  rowsLabel?: string;
 }
 
 // Column key may be `<table>.<col>` (decoration table) or just `<col>` (intrinsic /
@@ -157,7 +162,7 @@ function csvCell(value: unknown): string {
   return s;
 }
 
-export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnGroups, decorationTables, defaultHiddenColumns, externalSelection, onClearSelection, labelOverrides, keyColumn = "root_id", crossNavHref, enableNglAction = true }: Props) {
+export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnGroups, decorationTables, defaultHiddenColumns, externalSelection, onClearSelection, labelOverrides, keyColumn = "root_id", crossNavHref, enableNglAction = true, rowsLabel = "partners" }: Props) {
   const [searchParams] = useSearchParams();
   const setUrlParams = useSetUrlParams();
   const makeLink = useMakeLinkMutation();
@@ -624,12 +629,19 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
     const a = document.createElement("a");
     a.href = url;
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `partners-${rootId}-${direction}-${ts}.csv`;
+    // Filename embeds the row label, focal id, and (when meaningful) the
+    // direction so a workspace with multiple exports doesn't lose track
+    // of which is which. Explorer rows are direction-agnostic; the
+    // direction slug is dropped when NGL isn't enabled (a reasonable
+    // proxy for "this isn't a partner table").
+    a.download = enableNglAction
+      ? `${rowsLabel}-${rootId}-${direction}-${ts}.csv`
+      : `${rowsLabel}-${rootId}-${ts}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [table, rootId, direction]);
+  }, [table, rootId, direction, rowsLabel, enableNglAction]);
 
   // Both-tab action bar uses a single scope (selection > filter > all) so the
   // three direction buttons can operate on the same set without stacking nine
@@ -663,7 +675,10 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
         </div>
       )}
       <div className="actions">
-        {direction === "both" ? (
+        {/* NGL action bar (bulk + per-direction) is partner-frame specific.
+            Explorer disables via enableNglAction=false; the counter and
+            CSV controls still render so the action bar isn't empty. */}
+        {enableNglAction && (direction === "both" ? (
           <>
             <span className="scope">Open in NGL ({bothScope.label}):</span>
             <button onClick={() => open("inputs", bothScope.ids)}>input syns</button>
@@ -689,11 +704,11 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
               Open {selectedIds.length} selected in NGL
             </button>
           </>
-        )}
+        ))}
         <span className="page">
           {filteredRows.length === rows.length
-            ? `${rows.length} partners`
-            : `${filteredRows.length} of ${rows.length} partners`}
+            ? `${rows.length} ${rowsLabel}`
+            : `${filteredRows.length} of ${rows.length} ${rowsLabel}`}
         </span>
         <button
           type="button"

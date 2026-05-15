@@ -50,21 +50,65 @@ export interface EmbeddingScatterArgs {
   ds: string;
   featureTableId: string;
   embeddingId: string;
+  /** Optional column override for the x axis (parquet col or
+   *  `<dec_table>.<col>`). Defaults to the embedding's first axis. */
+  x?: string | null;
+  /** Optional column override for the y axis. */
+  y?: string | null;
+  /** Optional color channel column. */
+  colorBy?: string | null;
+  /** Optional size channel column (numeric only). */
+  sizeBy?: string | null;
+  /** Attached decoration tables — required when any channel references
+   *  a `<table>.<col>` not on the feature_table itself. */
+  decorationTables?: string[];
+  /** mat_version — required when any channel references a decoration
+   *  column (drives the cell_id → root_id resolver). */
+  matVersion?: number | "live" | null;
 }
 
 /** Universe payload for the scatter component. Parquet-pinned + cached
- *  immutably; second-and-subsequent fetches are dict-fast. */
+ *  immutably; channel bindings cut a new cache entry per binding set. */
 export function useEmbeddingScatter(args: EmbeddingScatterArgs | null) {
   return useQuery<EmbeddingScatterResponse>({
     queryKey: args
-      ? ["embedding_scatter", args.ds, args.featureTableId, args.embeddingId]
+      ? [
+          "embedding_scatter",
+          args.ds,
+          args.featureTableId,
+          args.embeddingId,
+          args.x ?? "",
+          args.y ?? "",
+          args.colorBy ?? "",
+          args.sizeBy ?? "",
+          (args.decorationTables ?? []).join(","),
+          args.matVersion ?? "",
+        ]
       : ["embedding_scatter", "disabled"],
     queryFn: () =>
       apiFetch<EmbeddingScatterResponse>(
         PATHS.scatter(args!.ds, args!.featureTableId, args!.embeddingId),
+        {
+          query: {
+            x: args!.x || undefined,
+            y: args!.y || undefined,
+            color: args!.colorBy || undefined,
+            size: args!.sizeBy || undefined,
+            dec: args!.decorationTables?.length
+              ? args!.decorationTables.join(",")
+              : undefined,
+            mat_version:
+              args!.matVersion === "live"
+                ? "live"
+                : args!.matVersion === null || args!.matVersion === undefined
+                  ? undefined
+                  : String(args!.matVersion),
+          },
+        },
       ),
     enabled: !!args && !!args.ds && !!args.featureTableId && !!args.embeddingId,
-    // Parquet content is pinned by URI — once loaded, no need to refetch.
+    // Parquet content is pinned by URI; channel projections derived
+    // from it are pinned by params; once fetched, no need to refetch.
     staleTime: Infinity,
   });
 }

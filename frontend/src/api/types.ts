@@ -428,13 +428,38 @@ export interface ResolveRootsResponse {
   resolutions: CellRootResolution[];
 }
 
+export interface EmbeddingColorBlock {
+  column: string;
+  kind: "categorical" | "numeric";
+  /** Same length as `cell_ids`. Categorical → strings or null;
+   *  numeric → numbers or null. */
+  values: Array<string | number | null>;
+  /** Value → hex map. Present only on categorical channels; lets the
+   *  scatter reuse the project's consistent categorical palette so a
+   *  predicted_class value lands on the same hex it does in /neuron. */
+  color_map?: Record<string, string>;
+}
+
+export interface EmbeddingSizeBlock {
+  column: string;
+  /** Same length as `cell_ids`. Server pre-scales to [4, 20]px so the
+   *  client renders without re-fitting. */
+  values: number[];
+  raw_range: [number, number];
+}
+
 /** Scatter (universe) payload for one embedding view. */
 export interface EmbeddingScatterResponse {
   cell_ids: string[];
-  x: number[];
-  y: number[];
-  n_cells: number;
+  /** Per-point x and y values. Nullable because a parquet column
+   *  (e.g. a subset-embedding axis) may be null for cells outside the
+   *  subset; the scatter drops those points. */
+  x: Array<number | null>;
+  y: Array<number | null>;
   axes: { x: string; y: string };
+  color: EmbeddingColorBlock | null;
+  size: EmbeddingSizeBlock | null;
+  n_cells: number;
 }
 
 /** Cell-list rows for the explorer's PartnersTable mounting. Shape

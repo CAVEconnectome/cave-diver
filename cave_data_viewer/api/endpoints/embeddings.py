@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 from flask import Blueprint, current_app, jsonify, request
 
 from ..auth import auth_required, current_token, is_dev_bypass
@@ -45,7 +46,11 @@ from ..services.embeddings import (
     reverse_resolve_root_id_to_cell_id,
     source_for,
 )
-from ..services.plots import _apply_cell_filters, _parse_cells_param
+from ..services.categorical import (
+    get_unique_values as _categorical_get_unique_values,
+    resolve_categorical_color_map,
+)
+from ..services.plots import _apply_cell_filters, _parse_cells_param, _scale_size
 
 bp = Blueprint("embeddings", __name__, url_prefix="/datastacks")
 
@@ -90,33 +95,63 @@ def list_feature_tables(ds: str):
 )
 @auth_required
 def scatter(ds: str, feature_table_id: str, embedding_id: str):
-    """Universe scatter payload for one embedding view.
+    """Universe scatter payload for one embedding view, with optional
+    channel bindings.
 
     Returns parallel arrays — ``cell_ids`` + the two axis columns the
-    embedding declares — for *every* cell in the parquet, with no filter
-    and no decoration merge applied. This is the universe layer the SPA's
-    ``UniverseScatter`` renders as its base trace; highlight overlays
-    (``?cells=`` filter result, ``?sel_<id>=`` brush, lasso selection)
-    are computed client-side as Set<cell_id> intersections over the
-    universe's ``cell_ids`` array, no extra round-trip per filter change.
+    user picked (default: the embedding's declared axes) — for *every*
+    cell in the parquet. Highlight overlays (``?cells=`` filter result,
+    ``?sel_<id>=`` brush, lasso selection) are computed client-side as
+    Set<cell_id> intersections over the universe ``cell_ids`` array, no
+    extra round-trip per filter change.
 
-    No CAVE call. Backed by ``dcv_embedding_frame_cache`` (immutable L1
-    + L2 GCS), so cold pods see a one-time parquet read and every
-    subsequent request is dict-fast.
+    Optional query params override the defaults seaborn-style:
+
+    - ``x``, ``y`` — column to bind to each axis. Bare name resolves to
+      a parquet column under the feature_table's prefix
+      (``{ft.id}.<col>``); dotted ``<table>.<col>`` resolves to a
+      decoration column (the table must appear in ``?dec=``).
+    - ``color`` — column to bind to per-point color. Categorical columns
+      come back with a stable ``color_map`` derived from the column's
+      universe via ``resolve_categorical_color_map`` so the same value
+      lands on the same hex in every plot (consistent with /neuron).
+      Numeric columns come back with raw values; the SPA picks a
+      continuous colorscale.
+    - ``size`` — numeric column to bind to per-point size. Server
+      pre-scales to a [4, 20] px range via ``_scale_size``.
+    - ``dec`` — comma-separated decoration tables to attach. Required
+      when any channel references a ``<table>.<col>`` name.
+    - ``mv`` — mat_version. Required when any channel references a
+      decoration column (drives the cell_id → root_id resolver).
+
+    No CAVE call when channels reference only parquet columns. Backed
+    by ``dcv_embedding_frame_cache`` (immutable L1 + L2 GCS), so cold
+    pods see a one-time parquet read and every subsequent request is
+    dict-fast.
 
     Response shape::
 
         {
-          "cell_ids": ["12345", "12346", ...],
+          "cell_ids": ["12345", ...],
           "x": [1.23, 2.34, ...],
           "y": [-0.12, 4.21, ...],
-          "n_cells": 1000,
-          "axes": {"x": "umap_x", "y": "umap_y"}
+          "axes": {"x": "<col>", "y": "<col>"},
+          "color": null | {
+            "column": "<col>",
+            "kind": "categorical" | "numeric",
+            "values": ["L23_PYR", "L4_PYR", null, ...],
+            "color_map": {"L23_PYR": "#1f77b4", ...}  // categorical only
+          },
+          "size": null | {
+            "column": "<col>",
+            "values": [4.2, 12.7, 4.0, ...],  // pre-scaled to [4, 20] px
+            "raw_range": [min, max]
+          },
+          "n_cells": 94010
         }
 
-    ``cell_ids`` is stringified at the JSON boundary per the project's
-    int64-as-string convention, even though cell_ids fit comfortably in
-    JS Number — keeps the wire shape symmetric with root_id payloads.
+    Cell_ids are stringified at the JSON boundary per the project's
+    int64-as-string convention.
     """
     cfg = load_datastack_config(ds)
     src = source_for(ds, cfg)
@@ -132,34 +167,186 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
     except KeyError as exc:
         raise ApiError(404, "embedding_not_found", str(exc)) from exc
 
-    frame = load_feature_table_frame(ds, ft, cache_ds=cfg.cache_alias or ds)
-    x_col, y_col = emb.axes[0], emb.axes[1]
-    missing = [c for c in (ft.id_column, x_col, y_col) if c not in frame.columns]
-    if missing:
-        # Axes are declared by the manifest but the parquet doesn't have
-        # them — surfaces a manifest/parquet mismatch as a 422 rather
-        # than a confusing KeyError deep inside numpy.
+    # Channel + decoration params.
+    x_override = request.args.get("x") or None
+    y_override = request.args.get("y") or None
+    color_col = request.args.get("color") or None
+    size_col = request.args.get("size") or None
+    mv_raw = request.args.get("mat_version")
+    if mv_raw is None or mv_raw == "":
+        mat_version: int | str | None = None
+    elif mv_raw == "live":
+        mat_version = "live"
+    else:
+        try:
+            mat_version = int(mv_raw)
+        except ValueError as exc:
+            raise ApiError(
+                422, "invalid_mat_version",
+                f"mat_version must be an integer or 'live', got {mv_raw!r}",
+            ) from exc
+
+    decoration_tables: list[str] = []
+    dec_raw = request.args.get("dec") or ""
+    if dec_raw:
+        decoration_tables = [t.strip() for t in dec_raw.split(",") if t.strip()]
+
+    # Defaults for axes: the embedding's declared axes get prefixed with
+    # the feature_table id to match the canonical column-naming convention
+    # FeatureTableQuery.frame() emits.
+    default_x = f"{ft.id}.{emb.axes[0]}"
+    default_y = f"{ft.id}.{emb.axes[1]}"
+    x_col = x_override or default_x
+    y_col = y_override or default_y
+
+    # Auto-extend decoration_tables to cover any channel that references
+    # a non-feature-table table. Channels that reference the feature_table
+    # itself read from the prefixed parquet columns natively.
+    for col in (x_col, y_col, color_col, size_col):
+        if not col:
+            continue
+        if "." not in col:
+            continue
+        table = col.split(".", 1)[0]
+        if table == ft.id:
+            continue
+        if table not in decoration_tables:
+            decoration_tables.append(table)
+
+    if decoration_tables and mat_version is None:
         raise ApiError(
             422,
-            "embedding_axes_missing",
-            f"embedding {embedding_id!r} on feature_table {feature_table_id!r} "
-            f"references columns {missing!r} which are not in the parquet at "
-            f"{ft.source.uri!r} (have {list(frame.columns)})",
+            "missing_mat_version",
+            "mat_version is required when a channel references a "
+            "decoration column",
+        )
+    if decoration_tables:
+        try:
+            check_live_allowed(ds, mat_version)
+        except ValueError as exc:
+            raise ApiError(422, "live_mode_disallowed", str(exc)) from exc
+
+    def _client_factory():
+        return request_client(
+            datastack_name=ds,
+            server_address=current_app.config["GLOBAL_SERVER_ADDRESS"],
+            auth_token=current_token(),
+            dev_bypass=is_dev_bypass(),
+            materialize_version=mat_version,
         )
 
-    # `.tolist()` lands as native Python types so jsonify's default encoder
-    # handles them without the NumpyJSONProvider's scalar-coercion path.
-    # Cell_ids stringified individually to preserve int64 precision and
-    # match the partner-frame wire shape — even though cell_ids fit in
-    # JS Number, downstream code that compares ids in URL params expects
-    # strings throughout.
+    ft_query = FeatureTableQuery(
+        datastack=ds,
+        mat_version=mat_version,
+        feature_table=ft,
+        cfg=cfg,
+        client_factory=_client_factory if decoration_tables else None,
+    )
+    frame = ft_query.frame(decoration_tables=decoration_tables or None)
+
+    missing = [c for c in (x_col, y_col) if c not in frame.columns]
+    for ch in (color_col, size_col):
+        if ch and ch not in frame.columns:
+            missing.append(ch)
+    if missing:
+        raise ApiError(
+            422,
+            "channel_column_missing",
+            f"channel references unknown column(s) {missing!r} "
+            f"(have {list(frame.columns)})",
+        )
+
+    # Channel projections.
+    color_block: dict | None = None
+    if color_col:
+        series = frame[color_col]
+        if pd.api.types.is_numeric_dtype(series):
+            color_block = {
+                "column": color_col,
+                "kind": "numeric",
+                "values": [
+                    None if pd.isna(v) else float(v) for v in series.tolist()
+                ],
+            }
+        else:
+            # Categorical: build a stable color_map keyed off the
+            # column's universe. Parquet columns have a closed universe
+            # we can read directly; decoration columns ask CAVE via the
+            # cell_type-colors machinery so the same value lands on the
+            # same hex /everywhere/ — explorer scatter, /neuron plots,
+            # bar charts in the analytics rail.
+            table_name = color_col.split(".", 1)[0] if "." in color_col else None
+            bare_col = color_col.split(".", 1)[1] if "." in color_col else color_col
+            universe: list[str]
+            if table_name == ft.id:
+                universe = (
+                    series.dropna().astype(str).unique().tolist()
+                )
+            elif table_name:
+                universe = _categorical_get_unique_values(
+                    client_factory=_client_factory,
+                    ds=ds,
+                    mat_version=mat_version,
+                    table=table_name,
+                    column=bare_col,
+                )
+                if not universe:
+                    universe = series.dropna().astype(str).unique().tolist()
+            else:
+                universe = series.dropna().astype(str).unique().tolist()
+            color_map = resolve_categorical_color_map(
+                universe=universe,
+                observed=series.dropna().tolist(),
+            )
+            color_block = {
+                "column": color_col,
+                "kind": "categorical",
+                "values": [None if pd.isna(v) else str(v) for v in series.tolist()],
+                "color_map": {str(k): v for k, v in color_map.items() if k is not None},
+            }
+
+    size_block: dict | None = None
+    if size_col:
+        series = frame[size_col]
+        if not pd.api.types.is_numeric_dtype(series):
+            raise ApiError(
+                422,
+                "channel_size_non_numeric",
+                f"size channel {size_col!r} is not numeric "
+                f"(dtype={series.dtype}); size only supports numeric columns",
+            )
+        finite = pd.to_numeric(series, errors="coerce").dropna()
+        if finite.empty:
+            raw_range = [0.0, 0.0]
+        else:
+            raw_range = [float(finite.min()), float(finite.max())]
+        # Cap the size range tighter than the partner-frame default
+        # (4-20px). 12px on 94k scattergl points hits overdraw + GPU
+        # buffer budgets hard enough to corrupt rendering on some
+        # Chrome/Mac configurations; 3-10px stays well clear with the
+        # same visual encoding density.
+        scaled = _scale_size(series, lo_px=3.0, hi_px=10.0)
+        size_block = {
+            "column": size_col,
+            "values": [float(v) for v in scaled.tolist()],
+            "raw_range": raw_range,
+        }
+
     return jsonify(
         {
-            "cell_ids": [str(int(c)) for c in frame[ft.id_column].tolist()],
-            "x": frame[x_col].astype(float).tolist(),
-            "y": frame[y_col].astype(float).tolist(),
-            "n_cells": int(len(frame)),
+            "cell_ids": [str(int(c)) for c in frame["cell_id"].tolist()],
+            "x": [
+                None if pd.isna(v) else float(v)
+                for v in frame[x_col].tolist()
+            ],
+            "y": [
+                None if pd.isna(v) else float(v)
+                for v in frame[y_col].tolist()
+            ],
             "axes": {"x": x_col, "y": y_col},
+            "color": color_block,
+            "size": size_block,
+            "n_cells": int(len(frame)),
         }
     )
 

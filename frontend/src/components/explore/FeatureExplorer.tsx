@@ -7,6 +7,7 @@ import {
 } from "../../hooks/useUrlState";
 import { CellFilterPanel } from "../CellFilterPanel";
 import { PartnersTable } from "../PartnersTable";
+import { ChannelPicker } from "./ChannelPicker";
 import { DecorationPicker } from "./DecorationPicker";
 import { EmbeddingPicker } from "./EmbeddingPicker";
 import { FeatureTablePicker } from "./FeatureTablePicker";
@@ -36,6 +37,14 @@ export function FeatureExplorer() {
   const [decRaw] = useUrlParam("dec");
   const [cells] = useUrlParam("cells");
   const [selUniverseRaw, setSelUniverse] = useUrlParam("sel_universe");
+  // Seaborn-style channel bindings. Each is the dotted column name
+  // (parquet columns are prefixed with the feature_table id; decoration
+  // columns are `<dec_table>.<col>`) or null to fall back to the
+  // embedding's default.
+  const [xBinding] = useUrlParam("x");
+  const [yBinding] = useUrlParam("y");
+  const [colorBinding] = useUrlParam("color");
+  const [sizeBinding] = useUrlParam("size");
   const setUrl = useSetUrlParams();
 
   const matVersion = parseMatVersion(mv);
@@ -149,6 +158,7 @@ export function FeatureExplorer() {
 
   const currentFt = featureTables.find((t) => t.id === ft) ?? null;
   const currentEmbeddings = currentFt?.embeddings ?? [];
+  const currentEmb = currentEmbeddings.find((e) => e.id === emb) ?? null;
 
   return (
     <div className="explore">
@@ -180,6 +190,25 @@ export function FeatureExplorer() {
             }
           />
         )}
+        <ChannelPicker
+          featureTable={currentFt}
+          cellsColumnGroups={cellList.data?.column_groups}
+          x={xBinding}
+          y={yBinding}
+          colorBy={colorBinding}
+          sizeBy={sizeBinding}
+          defaultXLabel={currentEmb?.axes?.[0]}
+          defaultYLabel={currentEmb?.axes?.[1]}
+          defaultColorLabel={currentEmb?.default_color_by ?? null}
+          onChange={(next) =>
+            setUrl({
+              ...(next.x !== undefined ? { x: next.x } : {}),
+              ...(next.y !== undefined ? { y: next.y } : {}),
+              ...(next.colorBy !== undefined ? { color: next.colorBy } : {}),
+              ...(next.sizeBy !== undefined ? { size: next.sizeBy } : {}),
+            })
+          }
+        />
         <CellFilterPanel
           columnGroups={cellList.data?.column_groups}
           sampleRows={cellList.data?.rows}
@@ -190,6 +219,12 @@ export function FeatureExplorer() {
           ds={ds}
           featureTableId={ft}
           embeddingId={emb}
+          x={xBinding}
+          y={yBinding}
+          colorBy={colorBinding}
+          sizeBy={sizeBinding}
+          decorationTables={decorationTables}
+          matVersion={matVersion}
           highlightedCellIds={highlightedCellIds}
           onLassoSelect={(ids) =>
             setSelUniverse(ids.length > 0 ? ids.join(",") : null)
@@ -243,10 +278,11 @@ export function FeatureExplorer() {
               // explorer→neuron resolver hop is wired (next batch).
               // For now make the cross-nav arrow a no-op anchor.
               crossNavHref={() => "#"}
-              // NGL action depends on a focal-row root_id which doesn't
-              // exist for cell-id rows; disable until a generic
-              // ids-as-segments /links template lands.
+              // NGL action + bulk NGL action bar depend on a focal-row
+              // root_id which doesn't exist for cell-id rows; disable
+              // until a generic ids-as-segments /links template lands.
               enableNglAction={false}
+              rowsLabel="cells"
             />
           )}
         </div>
