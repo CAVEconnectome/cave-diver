@@ -145,30 +145,44 @@ export function UniverseScatter({
     matVersion,
   });
 
-  // Per-point resolved color/size arrays + base/highlight partition.
-  const partition = useMemo(() => buildPartition(query.data, highlightedCellIds), [
-    query.data,
-    highlightedCellIds,
-  ]);
+  // Compute the per-axis extents once per data update. Used both to
+  // normalize positions before they hit the layer (so x and y can
+  // scale independently — OrthographicView itself is uniform-aspect)
+  // and to seed the initial view state.
+  const extent = useMemo(
+    () => (query.data ? computeExtent(query.data) : null),
+    [query.data],
+  );
 
-  // Initial view state — fit the universe's extent into the canvas the
-  // first time data lands. After the initial fit the controller drives
-  // viewState (pan/zoom interactions write back through
-  // `onViewStateChange`). A binding swap that changes the axis columns
-  // re-fits to the new data's extent.
+  // Per-point resolved color/size arrays + base/highlight partition.
+  // Positions are pre-normalized to a unit square so the
+  // OrthographicView's uniform scaling doesn't squash one axis flat
+  // when the data ranges differ wildly (depth: 1–1500 vs folding ratio:
+  // 0–2). Pan/zoom operate in normalized space; axis labels (when we
+  // add them) inverse-transform tick positions through `extent`.
+  const partition = useMemo(
+    () => buildPartition(query.data, highlightedCellIds, extent),
+    [query.data, highlightedCellIds, extent],
+  );
+
+  // Initial view state — fit the unit square into the canvas with a
+  // small padding margin. Independent of `extent` because the data is
+  // pre-normalized; pan/zoom write back through `onViewStateChange`
+  // after the initial fit. Re-fits when the axes change (binding swap)
+  // even though the destination view is identical — keeps the user
+  // oriented when they swap embedding-vs-feature views.
   const [viewState, setViewState] = useState<{
     target: [number, number, number];
     zoom: number;
   } | null>(null);
   const axesKey = `${query.data?.axes.x ?? ""}/${query.data?.axes.y ?? ""}`;
   useEffect(() => {
-    if (!query.data) return;
-    const extent = computeExtent(query.data);
-    setViewState(extentToViewState(extent, height));
+    if (!extent) return;
+    setViewState(unitSquareViewState(height));
     // axesKey changes when the user picks different x/y channels; that
     // re-fires this effect and re-fits. `height` re-fits too if the
     // container resizes, which is the right behavior.
-  }, [axesKey, height, query.data]);
+  }, [axesKey, height, extent]);
 
   const layers = useMemo(() => {
     if (!partition) return [];
@@ -275,9 +289,17 @@ interface Partition {
 function buildPartition(
   data: EmbeddingScatterResponse | undefined,
   highlight: Set<string> | null | undefined,
+  extent: Extent | null,
 ): Partition | null {
-  if (!data) return null;
+  if (!data || !extent) return null;
   const n = data.cell_ids.length;
+  // Per-axis linear scalers to [0, 1]. Constant-axis (xMax === xMin)
+  // collapses to 0.5 so every point lands at the middle of that axis
+  // rather than NaN'ing the position.
+  const xSpan = extent.xMax - extent.xMin;
+  const ySpan = extent.yMax - extent.yMin;
+  const xScale = xSpan > 0 ? 1 / xSpan : 0;
+  const yScale = ySpan > 0 ? 1 / ySpan : 0;
   const colorBlock = data.color;
   const sizeBlock = data.size;
   const hasHighlight = !!highlight && highlight.size > 0;
@@ -353,9 +375,11 @@ function buildPartition(
       radius = isHighlight ? 4 : hasHighlight ? 2 : 3;
     }
 
+    const nx = xScale > 0 ? ((x as number) - extent.xMin) * xScale : 0.5;
+    const ny = yScale > 0 ? ((y as number) - extent.yMin) * yScale : 0.5;
     const row: RenderRow = {
       id,
-      position: [x as number, y as number],
+      position: [nx, ny],
       color: [rgb[0], rgb[1], rgb[2], alpha],
       radius,
     };
@@ -371,12 +395,14 @@ function buildPartition(
   return { base, highlight: hl, colorRevision, sizeRevision };
 }
 
-function computeExtent(data: EmbeddingScatterResponse): {
+interface Extent {
   xMin: number;
   xMax: number;
   yMin: number;
   yMax: number;
-} {
+}
+
+function computeExtent(data: EmbeddingScatterResponse): Extent {
   let xMin = Number.POSITIVE_INFINITY;
   let xMax = Number.NEGATIVE_INFINITY;
   let yMin = Number.POSITIVE_INFINITY;
@@ -397,27 +423,21 @@ function computeExtent(data: EmbeddingScatterResponse): {
   return { xMin, xMax, yMin, yMax };
 }
 
-function extentToViewState(
-  ext: { xMin: number; xMax: number; yMin: number; yMax: number },
-  heightPx: number,
-): { target: [number, number, number]; zoom: number } {
-  // Center on the data; pick a zoom that fits the wider axis with a
-  // small padding margin. OrthographicView's `zoom` is log2-pixels-per-
-  // data-unit, so zoom = log2(viewportSize / dataSize).
-  const cx = (ext.xMin + ext.xMax) / 2;
-  const cy = (ext.yMin + ext.yMax) / 2;
-  const dx = Math.max(1e-6, ext.xMax - ext.xMin);
-  const dy = Math.max(1e-6, ext.yMax - ext.yMin);
-  // Approximate viewport: width unknown at this layer, but height is.
-  // Use height for the y-axis fit and trust the x-axis to follow once
-  // the canvas is sized (deck.gl handles aspect via the controller).
-  const padding = 0.1; // 10% margin around the data
-  const yPaddedSpan = dy * (1 + padding * 2);
-  const zoom = Math.log2(heightPx / yPaddedSpan);
-  // Clamp away from extreme values to keep the initial render sensible.
-  void dx;
+function unitSquareViewState(heightPx: number): {
+  target: [number, number, number];
+  zoom: number;
+} {
+  // Data is pre-normalized to a unit square in `buildPartition`, so
+  // the view always targets (0.5, 0.5) and the zoom that fits the y
+  // axis depends only on the canvas height. OrthographicView's zoom
+  // is log2-pixels-per-data-unit; with a 1-unit-tall data extent and a
+  // 10% padding, we want heightPx * (1 - 2*padding) pixels to cover
+  // the 1-unit span.
+  const padding = 0.1;
+  const fitHeightPx = heightPx * (1 - 2 * padding);
+  const zoom = Math.log2(fitHeightPx);
   return {
-    target: [cx, cy, 0],
+    target: [0.5, 0.5, 0],
     zoom: Math.max(-10, Math.min(20, zoom)),
   };
 }
