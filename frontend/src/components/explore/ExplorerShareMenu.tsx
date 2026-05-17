@@ -39,6 +39,7 @@ export function ExplorerShareMenu({ ds, selection }: Props) {
   const [description, setDescription] = useState("");
   const [copied, setCopied] = useState<"query" | "recipe" | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // "Has content" considers both URL-shape state (scatter bindings,
@@ -121,8 +122,19 @@ export function ExplorerShareMenu({ ds, selection }: Props) {
     const parsed = parseRecipesFromYaml(text);
     for (const recipe of parsed.recipes) savePersonal(ds, recipe);
     e.target.value = "";
-    setSavedFlash(true);
-    window.setTimeout(() => setSavedFlash(false), 1500);
+
+    if (parsed.recipes.length > 0) {
+      setUploadMessage({
+        kind: "ok",
+        text: `Loaded ${parsed.recipes.length} recipe${parsed.recipes.length === 1 ? "" : "s"}.`,
+      });
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1500);
+    } else {
+      const errText = parsed.errors[0] ?? "No recipes found in file.";
+      setUploadMessage({ kind: "err", text: errText });
+    }
+    window.setTimeout(() => setUploadMessage(null), 4000);
   };
 
   const selectionHint =
@@ -205,6 +217,14 @@ export function ExplorerShareMenu({ ds, selection }: Props) {
           onChange={onFileChosen}
           style={{ display: "none" }}
         />
+        {uploadMessage && (
+          <p
+            className={uploadMessage.kind === "err" ? "error" : "muted"}
+            style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}
+          >
+            {uploadMessage.text}
+          </p>
+        )}
       </div>
     </details>
   );
