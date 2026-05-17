@@ -5409,3 +5409,27 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .example-card-footer { margin-top: auto; display: flex; gap: 0.25rem; font-size: 0.75rem; color: var(--muted, #888); }
 .example-card-status { margin: 0; font-size: 0.8rem; color: var(--muted, #555); }
 .example-card-error { margin: 0; font-size: 0.8rem; color: var(--error, #b33); }
+
+/* ---- ExamplesPage ---------------------------------------------------------
+   /examples route: filter chips + responsive card grid. */
+.examples-page { padding: 1rem; max-width: 1100px; margin: 0 auto; }
+.examples-page h2 { margin-top: 0; }
+.examples-filters { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.examples-filters button {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--line, #ddd);
+  background: transparent;
+  border-radius: var(--r-md, 4px);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+.examples-filters button.active {
+  background: var(--accent, #2a3f6b);
+  color: white;
+  border-color: var(--accent, #2a3f6b);
+}
+.examples-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 1rem;
+}

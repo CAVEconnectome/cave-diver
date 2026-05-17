@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { ExamplesPage } from "./components/ExamplesPage";
 import { LandingPage } from "./components/LandingPage";
 import { NeuronView } from "./components/NeuronView";
 import { NotFound } from "./components/NotFound";
@@ -32,6 +33,7 @@ export function App() {
             <Route path="neuron" element={<NeuronView />} />
             <Route path="tables" element={<TableView />} />
             <Route path="tables/:name" element={<TableRowsView />} />
+            <Route path="examples" element={<ExamplesPage />} />
             <Route path="explore" element={<FeatureExplorer />} />
             {/* Catch-all inside the Workspace shell so the sidebar +
                 breadcrumb stay rendered around the 404 message —
