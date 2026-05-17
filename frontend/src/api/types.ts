@@ -349,33 +349,7 @@ export interface ExplorerExample {
   full_text?: string;
   thumbnail?: string;
   pinned: ExamplePinning;
-  explorer: {
-    ft?: string;
-    emb?: string;
-    decoration_tables?: string[];
-    cells?: string;
-    scope_mode?: "ghost" | "hide" | null;
-    sel_filters?: string[];
-    x?: string;
-    y?: string;
-    color?: string;
-    size?: string;
-    cmap?: string;
-    color_min?: number;
-    color_max?: number;
-    color_center?: number;
-    size_min?: number;
-    size_max?: number;
-    size_data_min?: number;
-    size_data_max?: number;
-    growth_space?: string;
-    growth_variance?: number;
-    growth_reduction?: string;
-    growth_threshold?: number;
-    growth_features?: string[];
-    growth_topn?: number;
-    selection?: string[]; // present on full GET, stripped on list
-  };
+  explorer: ExplorerState;
   scope?: RecipeScope;
 }
 
