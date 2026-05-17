@@ -3,10 +3,9 @@ import { useSearchParams } from "react-router-dom";
 import type { ConnectivityBundle } from "../api/types";
 import { directionalColumnNames, unifyColumnGroups, unifyPartners } from "../plots/unify";
 import { gatherSelections, isSelKey } from "../plots/urlState";
-import { CellPanel } from "./CellPanel";
 import { PartnersTable } from "./PartnersTable";
 
-type Tab = "out" | "in" | "both" | "cell";
+type Tab = "out" | "in" | "both";
 
 interface Props {
   ds: string;
@@ -154,15 +153,6 @@ export function PartnersPane({ ds, rootId, matVersion, bundle, decorationTables 
         >
           Both ({counts.both})
         </button>
-        <button
-          role="tab"
-          aria-selected={tab === "cell"}
-          className={tab === "cell" ? "active" : ""}
-          onClick={() => setTab("cell")}
-          title="Annotations on the queried cell itself"
-        >
-          Cell
-        </button>
       </div>
 
       {tab === "out" && (
@@ -206,15 +196,6 @@ export function PartnersPane({ ds, rootId, matVersion, bundle, decorationTables 
           externalSelection={externalSelection}
           onClearSelection={clearAllSelections}
           labelOverrides={bundle.spatial_meta.label_overrides}
-        />
-      )}
-      {tab === "cell" && (
-        <CellPanel
-          ds={ds}
-          rootId={rootId}
-          matVersion={matVersion}
-          bundle={bundle}
-          columnGroups={bundle.column_groups}
         />
       )}
     </div>

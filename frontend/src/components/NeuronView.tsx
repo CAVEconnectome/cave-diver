@@ -9,6 +9,7 @@ import { isSelKey } from "../plots/urlState";
 import { useSessionRecipe } from "../tours/sessionRecipe";
 import { AnalyticsRail } from "./AnalyticsRail";
 import { Combobox } from "./Combobox";
+import { IdentityStrip } from "./IdentityStrip";
 import { PartnersPane } from "./PartnersPane";
 
 export function NeuronView() {
@@ -283,7 +284,16 @@ export function NeuronView() {
         )}
       </form>
 
-      {cellLookup.isPending && <p>Resolving cell id…</p>}
+      {ds && (
+        <IdentityStrip
+          ds={ds}
+          rootId={rootId}
+          matVersion={matVersion}
+          bundle={connectivity.data ?? null}
+          isLoadingBundle={connectivity.isFetching && !connectivity.data}
+          isResolvingCellId={cellLookup.isPending}
+        />
+      )}
       {cellLookup.error && (
         <p className="error">cell-id lookup failed: {cellLookup.error.message}</p>
       )}
@@ -312,7 +322,6 @@ export function NeuronView() {
           </button>
         </div>
       )}
-      {connectivity.isFetching && <p>Loading…</p>}
       {connectivity.error && (
         <p className="error">{(connectivity.error as Error).message}</p>
       )}

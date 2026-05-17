@@ -618,6 +618,242 @@ h1, h2, h3, h4, h5, h6 {
   to   { transform: rotate(360deg); }
 }
 
+/* Identity strip — persistent locator for the loaded cell. Sits between
+   the query form and the workbench so root_id, cell_id, and the
+   open-in-Neuroglancer action are visible from every tab. Also absorbs
+   the transient "resolving cell id" / "loading cell" states so the user
+   sees one element fill in rather than separate flashing lines.
+
+   The wrapper carries the marginal spacing + the optional details panel
+   below the row; the row itself stays a single flex line. When details
+   are open the wrapper shows the strip on top + the panel below in one
+   visual unit (shared border via removing the strip's bottom radius). */
+.identity-strip-wrapper {
+  margin-bottom: 12px;
+}
+.identity-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.identity-strip-wrapper.open .identity-strip {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.identity-strip.loading {
+  color: var(--muted);
+  font-style: italic;
+}
+.identity-ids {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.identity-id-block {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.identity-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: var(--fw-label);
+}
+.identity-value {
+  font-family: var(--font-mono);
+}
+.identity-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+}
+.identity-spinner {
+  display: inline-block;
+  animation: cdv-spin 1.4s linear infinite;
+}
+.identity-status-text { color: var(--muted); }
+
+/* NGL split button: primary "Open in Neuroglancer" + chevron toggle for
+   the kind menu (connectivity / inputs / outputs). Right-aligned via
+   margin-left:auto so IDs claim the left, action sits at the strip's edge. */
+.identity-actions {
+  position: relative;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: stretch;
+}
+.identity-ngl-primary,
+.identity-ngl-toggle {
+  background: var(--accent);
+  color: white;
+  border: 1px solid var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 12px;
+}
+.identity-ngl-primary {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+  border-right: 1px solid color-mix(in srgb, var(--accent) 70%, black);
+}
+.identity-ngl-toggle {
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.identity-ngl-primary:hover,
+.identity-ngl-toggle:hover {
+  background: var(--accent-strong, var(--accent));
+}
+.identity-ngl-primary:disabled,
+.identity-ngl-toggle:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.identity-ngl-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  min-width: 220px;
+  z-index: 20;
+}
+.identity-ngl-menu li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.identity-ngl-menu li:hover,
+.identity-ngl-menu li:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.identity-ngl-menu .menu-title {
+  font-size: 13px;
+  color: var(--fg);
+}
+.identity-ngl-menu .menu-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.identity-ngl-error {
+  color: var(--err, #c00);
+  font-size: 12px;
+  margin-left: 8px;
+  align-self: center;
+}
+
+/* Details disclosure — sits between the IDs (left) and the NGL action
+   (right). Pill shape matches the decorations chip so the strip's two
+   chips read as a consistent affordance vocabulary. */
+.identity-details-toggle {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: var(--r-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.identity-details-toggle:hover {
+  background: var(--surface);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.identity-details-toggle.open {
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+.identity-details-toggle .chevron { font-size: 10px; }
+.identity-details-count { opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+/* The details panel itself: stacks below the strip with a shared border.
+   Visual hierarchy: section headers (group names) are small uppercase
+   muted labels; kv rows use a responsive auto-fill grid so cards of
+   short labels pack tightly without forcing a single column. */
+.cell-details {
+  padding: 10px 12px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cell-details.empty {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+}
+.cell-details-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cell-details-group-name {
+  margin: 0;
+  font-size: 11px;
+  font-weight: var(--fw-label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-details-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 16px;
+}
+.cell-details-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.cell-details-row dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cell-details-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* `.neuron-view` is the route container holding (in order) the root-id form,
    the summary line, and the two-pane workbench. Setting it to a flex column
    that fills the height of `.main` lets `.workbench` claim the remaining
@@ -635,7 +871,9 @@ h1, h2, h3, h4, h5, h6 {
    stay pinned (no shrinking) so resizing the viewport eats into the
    workbench rather than into the controls. */
 .neuron-view > .root-form,
-.neuron-view > .summary {
+.neuron-view > .summary,
+.neuron-view > .identity-strip,
+.neuron-view > .identity-strip-wrapper {
   flex-shrink: 0;
 }
 
