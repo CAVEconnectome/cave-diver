@@ -19,6 +19,7 @@ export function ExampleCard({ ds, example }: { ds: string; example: Example }) {
   const [error, setError] = useState<string | null>(null);
 
   const onOpen = async () => {
+    if (opening) return;   // guard against double-clicks while a fetch is in flight
     setOpening(true);
     setError(null);
     try {
@@ -95,15 +96,17 @@ export function ExampleCard({ ds, example }: { ds: string; example: Example }) {
       <div className="example-card-body">
         <header>
           <h4>{example.title}</h4>
-          <button
-            type="button"
-            className="example-card-chevron"
-            aria-label={expanded ? "Collapse description" : "Expand description"}
-            aria-expanded={expanded}
-            onClick={(e) => { e.stopPropagation(); setExpanded((s) => !s); }}
-          >
-            {expanded ? "▴" : "▾"}
-          </button>
+          {example.full_text && (
+            <button
+              type="button"
+              className="example-card-chevron"
+              aria-label={expanded ? "Collapse description" : "Expand description"}
+              aria-expanded={expanded}
+              onClick={(e) => { e.stopPropagation(); setExpanded((s) => !s); }}
+            >
+              {expanded ? "▴" : "▾"}
+            </button>
+          )}
         </header>
         <p className="example-card-summary">{example.summary}</p>
         {expanded && example.full_text && (
