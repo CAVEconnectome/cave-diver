@@ -2,6 +2,7 @@ from flask import Blueprint
 
 from . import (  # noqa: F401
     cell_ids, connectivity, datastacks, decorations, embeddings,
+    examples,
     health, links, plots, recipes, table_rows,
 )
 
@@ -19,3 +20,4 @@ api_bp.register_blueprint(plots.catalog_bp)
 api_bp.register_blueprint(cell_ids.bp)
 api_bp.register_blueprint(recipes.bp)
 api_bp.register_blueprint(embeddings.bp)
+api_bp.register_blueprint(examples.examples_bp)
