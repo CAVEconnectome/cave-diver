@@ -3,7 +3,7 @@ kind: connectivity
 id: l23-pyr-deep-dive
 title: "L2/3 pyramidal — depth + cell-type deep dive"
 summary: "A canonical L2/3 excitatory cell with cortical-depth and cell-type decorations loaded."
-full_text: |
+full_text: >
   Demonstrates the synapse-depth profile and a partner cell-type breakdown.
   A good starting point for understanding the workspace's depth-aware analytics.
 pinned:
