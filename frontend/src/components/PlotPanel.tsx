@@ -183,9 +183,9 @@ export function PlotPanel({
               type={clickable ? "button" : undefined}
               className="plot-filter-badge off"
               onClick={onToggleFilter}
-              title={clickable ? "Re-enable cell filter on this panel" : undefined}
+              title={clickable ? "Re-enable scope on this panel" : undefined}
             >
-              filter: off{clickable ? " ↻" : ""}
+              scope: disabled{clickable ? " ↻" : ""}
             </Tag>
           );
         }
@@ -195,9 +195,9 @@ export function PlotPanel({
             type={clickable ? "button" : undefined}
             className={`plot-filter-badge${meta.matched_count === 0 ? " empty" : ""}${clickable ? " clickable" : ""}`}
             onClick={onToggleFilter}
-            title={clickable ? "Disable cell filter on this panel" : undefined}
+            title={clickable ? "Disable scope on this panel" : undefined}
           >
-            filter: {meta.matched_count} / {meta.pre_filter_count} cells{clickable ? " ⨯" : ""}
+            scope: {meta.matched_count} / {meta.pre_filter_count} cells{clickable ? " ⨯" : ""}
           </Tag>
         );
       })()}
