@@ -1676,7 +1676,11 @@ h1, h2, h3, h4, h5, h6 {
    and disappear as the user brushes / unbrushes. */
 .rail-header {
   display: flex;
-  justify-content: flex-end;
+  /* Scope on the left, brushes on the right — balanced layout.
+     Anchoring the Scope trigger left also keeps its popover (which
+     extends `left: 0` rightward) inside the rail rather than clipping
+     under the right-rail / table column. */
+  justify-content: space-between;
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;

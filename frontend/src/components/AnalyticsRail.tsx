@@ -252,6 +252,19 @@ export function AnalyticsRail({ ds, rootId, matVersion, bundle, decorationTables
   return (
     <div className="plots">
       <div className="rail-header">
+        {/* Cell filter sits at the LEFT of the rail header. In the
+            connectivity context, `?cells=` is the per-plot filter that
+            decides which cells contribute to each plot — called "Plot
+            Scope" here to distinguish from the explorer's
+            workspace-wide scope semantics. The popover keeps the
+            editing UI compact so it doesn't displace the plots
+            themselves. */}
+        <CellFilterMenu
+          label="Plot Scope"
+          columnGroups={bundle.column_groups}
+          sampleRows={filterSampleRows}
+          availableValues={tableValues.values}
+        />
         <button
           type="button"
           className="rail-clear-brushes"
@@ -267,15 +280,6 @@ export function AnalyticsRail({ ds, rootId, matVersion, bundle, decorationTables
             ? "No brushes"
             : `Clear ${activeBrushPanels} brush${activeBrushPanels === 1 ? "" : "es"}`}
         </button>
-        {/* Cell filter sits in the rail's header because the filter
-            scopes the plots — every panel in this rail respects the
-            current `?cells=`. The popover keeps the editing UI compact
-            so it doesn't displace the plots themselves. */}
-        <CellFilterMenu
-          columnGroups={bundle.column_groups}
-          sampleRows={filterSampleRows}
-          availableValues={tableValues.values}
-        />
       </div>
       {resolvedRegistry.map((d) =>
         d.kind === "static" ? (

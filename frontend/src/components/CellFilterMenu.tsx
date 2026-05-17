@@ -29,6 +29,12 @@ interface Props {
    *  the predicate builder uses it to render dropdowns / checkbox
    *  lists for categorical string columns. */
   availableValues?: Record<string, string[]>;
+  /** Trigger button label + the prefix used in tooltip strings. Defaults
+   *  to "Scope". The connectivity rail passes "Plot Scope" to clarify
+   *  that the filter scopes which cells appear in *plots* (and is
+   *  toggleable per-plot) — distinct from the explorer's workspace-wide
+   *  scope semantics. */
+  label?: string;
   /** Out-of-scope cell rendering mode. "ghost" = render desaturated
    *  in the background; "hide" = omit entirely. Affects the universe
    *  scatter. Only meaningful when a scope is active. Optional —
@@ -83,6 +89,7 @@ export function CellFilterMenu({
   onFilterToSelection,
   directScopeCount = 0,
   onClearScope,
+  label = "Scope",
 }: Props) {
   const [raw, setRaw] = useUrlParam("cells");
   const [open, setOpen] = useState(false);
@@ -118,10 +125,10 @@ export function CellFilterMenu({
 
   const triggerTitle =
     scopeSource === "snapshot"
-      ? `Scope — ${directScopeCount.toLocaleString()} cells from selection snapshot`
+      ? `${label} — ${directScopeCount.toLocaleString()} cells from selection snapshot`
       : scopeSource === "predicate"
-        ? `Scope — ${predicateCount} active predicate${predicateCount === 1 ? "" : "s"}`
-        : "Scope — which cells are active (build with the Selection Builder)";
+        ? `${label} — ${predicateCount} active predicate${predicateCount === 1 ? "" : "s"}`
+        : `${label} — which cells are active (build with the Selection Builder)`;
 
   // Close on outside click + Escape. Same pattern as the colormap picker
   // so behavior is consistent across the app's popovers.
@@ -171,7 +178,7 @@ export function CellFilterMenu({
         aria-expanded={open}
         title={triggerTitle}
       >
-        ⏚ Scope{triggerBadge}
+        ⏚ {label}{triggerBadge}
       </button>
       {open && (
         <div
