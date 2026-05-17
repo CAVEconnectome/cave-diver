@@ -298,13 +298,18 @@ export interface TourBase {
   id: string;
   title: string;
   description?: string | null;
-  decoration_tables: string[];
-  plots: TourPlot[];
+  // Array fields are OPTIONAL because operator recipes loaded from the
+  // RecipeRegistry are raw YAML dicts — a YAML that simply omits
+  // `hide:` / `show:` / `coll:` / `plots:` / `decoration_tables:` arrives
+  // with the keys absent rather than as empty arrays. Consumers must
+  // default to `[]` defensively (see urlMint.ts::applyTourConfigToParams).
+  decoration_tables?: string[];
+  plots?: TourPlot[];
   /** Raw `?cells=` URL value. Shape: `<table>.<col>:<op>:<val>[,...]`. */
   cells?: string | null;
-  hide: string[];
-  show: string[];
-  coll: string[];
+  hide?: string[];
+  show?: string[];
+  coll?: string[];
   /** Body schema version. Server stamps `1` if absent on PUT; future
    *  schema changes use this for negotiation. See
    *  `cave_data_viewer/api/services/recipes.py`. */

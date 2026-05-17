@@ -34,15 +34,17 @@ function emitRecipe(recipe: ConnectivityRecipe, lines: string[], indent: number)
   if (recipe.description) {
     emitDescription(recipe.description, lines, indent);
   }
-  if (recipe.decoration_tables.length > 0) {
+  const decorationTables = recipe.decoration_tables ?? [];
+  const plots = recipe.plots ?? [];
+  if (decorationTables.length > 0) {
     lines.push(`${pad}decoration_tables:`);
-    for (const t of recipe.decoration_tables) {
+    for (const t of decorationTables) {
       lines.push(`${pad}  - ${quoteIfNeeded(t)}`);
     }
   }
-  if (recipe.plots.length > 0) {
+  if (plots.length > 0) {
     lines.push(`${pad}plots:`);
-    for (const plot of recipe.plots) {
+    for (const plot of plots) {
       emitPlot(plot, lines, indent + 2);
     }
   }

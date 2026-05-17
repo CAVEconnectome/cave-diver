@@ -349,13 +349,13 @@ function summarizeTour(t: Recipe): string {
 
 function summarizeConnectivity(t: ConnectivityRecipe): string {
   const parts: string[] = [];
-  if (t.decoration_tables.length > 0) {
-    parts.push(
-      `${t.decoration_tables.length} decoration${t.decoration_tables.length === 1 ? "" : "s"}`,
-    );
+  const dt = t.decoration_tables ?? [];
+  const plots = t.plots ?? [];
+  if (dt.length > 0) {
+    parts.push(`${dt.length} decoration${dt.length === 1 ? "" : "s"}`);
   }
-  if (t.plots.length > 0) {
-    parts.push(`${t.plots.length} plot${t.plots.length === 1 ? "" : "s"}`);
+  if (plots.length > 0) {
+    parts.push(`${plots.length} plot${plots.length === 1 ? "" : "s"}`);
   }
   if (t.cells) parts.push("cell filter");
   return parts.join(" · ");

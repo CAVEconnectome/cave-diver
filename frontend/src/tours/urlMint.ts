@@ -101,7 +101,20 @@ const CONFIG_KEYS = ["dec", "plots", "cells", "hide", "show", "coll", "unfilter"
  */
 export function applyTourConfigToParams(
   prev: URLSearchParams,
-  tour: { decoration_tables: string[]; plots: TourPlot[]; cells?: string | null; hide: string[]; show: string[]; coll: string[] },
+  tour: {
+    // Required by the wire schema but treated defensively here: operator
+    // recipes loaded from RecipeRegistry come straight from YAML, and a
+    // recipe YAML that simply omits `hide:` / `show:` / `coll:` (or
+    // `plots:` / `decoration_tables:`) arrives with those keys absent
+    // rather than as empty arrays. The static TypeScript shape claims
+    // `string[]`, but the runtime can be `undefined`.
+    decoration_tables?: string[];
+    plots?: TourPlot[];
+    cells?: string | null;
+    hide?: string[];
+    show?: string[];
+    coll?: string[];
+  },
 ): URLSearchParams {
   const next = new URLSearchParams(prev);
 
@@ -113,20 +126,26 @@ export function applyTourConfigToParams(
   // Reset the configuration keys; we'll repopulate from the tour.
   for (const key of CONFIG_KEYS) next.delete(key);
 
-  if (tour.decoration_tables.length > 0) {
-    next.set("dec", tour.decoration_tables.join(","));
+  const decorationTables = tour.decoration_tables ?? [];
+  const plots = tour.plots ?? [];
+  const hide = tour.hide ?? [];
+  const show = tour.show ?? [];
+  const coll = tour.coll ?? [];
+
+  if (decorationTables.length > 0) {
+    next.set("dec", decorationTables.join(","));
   }
   if (tour.cells) {
     next.set("cells", tour.cells);
   }
-  if (tour.hide.length > 0) next.set("hide", tour.hide.join(","));
-  if (tour.show.length > 0) next.set("show", tour.show.join(","));
-  if (tour.coll.length > 0) next.set("coll", tour.coll.join(","));
+  if (hide.length > 0) next.set("hide", hide.join(","));
+  if (show.length > 0) next.set("show", show.join(","));
+  if (coll.length > 0) next.set("coll", coll.join(","));
 
-  if (tour.plots.length > 0) {
+  if (plots.length > 0) {
     const panelIds: string[] = [];
     const unfilteredIds: string[] = [];
-    for (const plot of tour.plots) {
+    for (const plot of plots) {
       const panelId = mintPanelId(plot);
       panelIds.push(panelId);
       // Summary panels carry no viz key — they read straight from the bundle.
@@ -229,8 +248,15 @@ export interface RecipeDiff {
 }
 
 export function diffRecipe(prev: URLSearchParams, recipe: ConnectivityRecipe): RecipeDiff {
+  // Same defensive normalization as `applyTourConfigToParams`: operator
+  // recipes from the registry are raw YAML dicts and may omit any of
+  // these array fields when empty.
   const prevDec = (prev.get("dec") ?? "").split(",").filter(Boolean);
-  const nextDec = recipe.decoration_tables;
+  const nextDec = recipe.decoration_tables ?? [];
+  const recipePlots = recipe.plots ?? [];
+  const recipeHide = recipe.hide ?? [];
+  const recipeShow = recipe.show ?? [];
+  const recipeColl = recipe.coll ?? [];
   const prevSet = new Set(prevDec);
   const nextSet = new Set(nextDec);
   const decorationsAdded = nextDec.filter((d) => !prevSet.has(d));
@@ -242,11 +268,11 @@ export function diffRecipe(prev: URLSearchParams, recipe: ConnectivityRecipe): R
     decorationsAdded,
     decorationsRemoved,
     panelsBefore: prevPlots.length,
-    panelsAfter: recipe.plots.length,
+    panelsAfter: recipePlots.length,
     cellsChanged: (prev.get("cells") ?? "") !== (recipe.cells ?? ""),
     hideChanged:
-      (prev.get("hide") ?? "") !== recipe.hide.join(",") ||
-      (prev.get("show") ?? "") !== recipe.show.join(",") ||
-      (prev.get("coll") ?? "") !== recipe.coll.join(","),
+      (prev.get("hide") ?? "") !== recipeHide.join(",") ||
+      (prev.get("show") ?? "") !== recipeShow.join(",") ||
+      (prev.get("coll") ?? "") !== recipeColl.join(","),
   };
 }
