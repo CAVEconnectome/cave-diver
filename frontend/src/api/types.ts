@@ -401,7 +401,11 @@ export type Recipe = ConnectivityRecipe | ExplorerRecipe;
 
 export interface ToursResponse {
   datastack: string;
-  examples: Example[];
+  // Deprecated — the /tours endpoint no longer returns examples.
+  // Examples are served by /api/v1/examples (Task 3.x). Field kept on
+  // the interface as optional to keep older client code type-checking,
+  // but it will always be `undefined` at runtime today.
+  examples?: Example[];
   recipes: Recipe[];
   /** Server-reported count of saved recipes the user has on disk that
    *  were skipped because they lack a recognized `kind`. Surfaced as a

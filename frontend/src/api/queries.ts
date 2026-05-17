@@ -71,7 +71,11 @@ export function usePlotSpecs() {
 }
 
 /**
- * Operator-curated landing-page tours (examples + recipes) for one datastack.
+ * Operator-curated landing-page recipes for one datastack.
+ *
+ * Note: examples are served separately by /api/v1/examples (Task 3.x);
+ * they are NOT included in this response despite the legacy hook name.
+ *
  * The YAML changes only with a deployment-config change, so cache aggressively
  * — same staleTime as the datastack list. Backend serves a fresh dump on
  * every request (cheap; no upstream calls).
