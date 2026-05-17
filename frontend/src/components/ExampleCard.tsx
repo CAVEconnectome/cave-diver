@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import type { ConnectivityRecipe, Example, ExplorerRecipe } from "../api/types";
 import { fetchExample, thumbnailUrl } from "../api/examples";
 import { adapterFor } from "../tours/adapters/registry";
+import { writePendingApplyExtras } from "../tours/useApplyRecipe";
 
 /**
  * One example card in the /examples grid. Two click affordances:
@@ -62,11 +63,8 @@ export function ExampleCard({ ds, example }: { ds: string; example: Example }) {
           ...(rest.scope !== undefined ? { scope: rest.scope } : {}),
         };
         const params = adapter.buildOpenParams(ds, recipe, mv);
-        const navState =
-          full.explorer.selection
-            ? { selection: full.explorer.selection }
-            : undefined;
-        navigate(`${adapter.openRoute}?${params.toString()}`, { state: navState });
+        writePendingApplyExtras(ds, "explorer", { selection: full.explorer.selection ?? [] });
+        navigate(`${adapter.openRoute}?${params.toString()}`);
       }
     } catch (e) {
       setError((e as Error).message);

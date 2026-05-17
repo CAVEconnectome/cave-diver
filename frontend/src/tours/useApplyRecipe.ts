@@ -37,7 +37,7 @@ export function consumePendingApplyExtras(
   }
 }
 
-function writePendingApplyExtras(
+export function writePendingApplyExtras(
   ds: string,
   kind: RecipeKind,
   extras: Record<string, unknown>,

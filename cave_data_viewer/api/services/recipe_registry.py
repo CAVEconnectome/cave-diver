@@ -27,6 +27,8 @@ from typing import Any
 
 import yaml
 
+from .recipes import SUPPORTED_SCHEMA_VERSIONS
+
 logger = logging.getLogger("cdv.recipe_registry")
 
 # Filename / id allowlist. Matches operator-curated id conventions
@@ -208,6 +210,15 @@ class RecipeRegistry:
             return None
         if not _ID_PATTERN.match(expected_id):
             logger.warning("%s: filename stem doesn't match id pattern", fpath)
+            return None
+
+        # Version required + supported.
+        version = data.get("version")
+        if version not in SUPPORTED_SCHEMA_VERSIONS:
+            logger.warning(
+                "%s: version %r not in supported set %s",
+                fpath, version, sorted(SUPPORTED_SCHEMA_VERSIONS),
+            )
             return None
 
         # Kind required + allowed.

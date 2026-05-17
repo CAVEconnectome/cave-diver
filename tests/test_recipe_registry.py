@@ -196,3 +196,21 @@ def test_rejects_example_missing_pinned(repo_root: Path) -> None:
     )
     reg = RecipeRegistry(repo_root=repo_root)
     assert reg.examples("ds_x") == []
+
+
+def test_rejects_unsupported_version(repo_root: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Examples (and recipes) with a version outside SUPPORTED_SCHEMA_VERSIONS
+    are skipped at load time so a future schema can't silently load against
+    an older server."""
+    _write_yaml(
+        repo_root / "config" / "recipes" / "ds_x" / "future.yaml",
+        {
+            "version": 999,
+            "kind": "connectivity",
+            "id": "future",
+            "title": "From the future",
+        },
+    )
+    reg = RecipeRegistry(repo_root=repo_root)
+    assert reg.recipes("ds_x") == []
+    assert any("version" in r.message for r in caplog.records)
