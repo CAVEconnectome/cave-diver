@@ -11,11 +11,12 @@
  * useApplicableRecipeKinds and renders nothing, so this is the sole
  * share affordance on the route.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { explorerAdapter } from "../../tours/adapters/explorerAdapter";
 import { newPersonalId, save as savePersonal } from "../../tours/personalRecipes";
+import { parseRecipesFromYaml } from "../../tours/recipeFromYaml";
 import {
   buildQueryLink,
   buildRecipeLink,
@@ -38,6 +39,7 @@ export function ExplorerShareMenu({ ds, selection }: Props) {
   const [description, setDescription] = useState("");
   const [copied, setCopied] = useState<"query" | "recipe" | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // "Has content" considers both URL-shape state (scatter bindings,
   // growth params, decorations, cells filter) and the Selection bag.
@@ -82,6 +84,43 @@ export function ExplorerShareMenu({ ds, selection }: Props) {
     setTitle("");
     setDescription("");
     setShowSaveForm(false);
+    setSavedFlash(true);
+    window.setTimeout(() => setSavedFlash(false), 1500);
+  };
+
+  const onDownload = () => {
+    if (!hasContent) return;
+    const recipe = explorerAdapter.parseFromUrl(searchParams, {
+      id: newPersonalId(),
+      title: title.trim() || "Untitled explorer view",
+      description: description.trim() || undefined,
+      extras: { selection },
+    });
+    const yaml = explorerAdapter.toYaml(recipe);
+    const blob = new Blob([yaml], { type: "application/x-yaml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const slug = recipe.title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "");
+    a.download = `${slug || recipe.id}.recipe.yaml`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const onUploadClick = () => fileInputRef.current?.click();
+
+  const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const parsed = parseRecipesFromYaml(text);
+    for (const recipe of parsed.recipes) savePersonal(ds, recipe);
+    e.target.value = "";
     setSavedFlash(true);
     window.setTimeout(() => setSavedFlash(false), 1500);
   };
@@ -146,6 +185,26 @@ export function ExplorerShareMenu({ ds, selection }: Props) {
             <button type="submit" disabled={!title.trim()}>Save</button>
           </form>
         )}
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={!hasContent}
+          title={
+            hasContent
+              ? "Download the current explorer view as YAML"
+              : "Configure the view before downloading"
+          }
+        >
+          Download YAML
+        </button>
+        <button type="button" onClick={onUploadClick}>Upload YAML</button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".yaml,.yml,application/x-yaml,text/yaml"
+          onChange={onFileChosen}
+          style={{ display: "none" }}
+        />
       </div>
     </details>
   );
