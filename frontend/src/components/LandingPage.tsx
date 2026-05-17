@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDatastacks, useTours } from "../api/queries";
 import { useSwitchDatastack, useUrlParam } from "../hooks/useUrlState";
-import type { ConnectivityRecipe, Example, Recipe } from "../api/types";
-import { buildExampleParams } from "../tours/urlMint";
+import type { ConnectivityRecipe, Recipe } from "../api/types";
 import { useApplyRecipe } from "../tours/useApplyRecipe";
 import {
   getInvalidCount,
@@ -82,10 +81,9 @@ function useActiveDatastack(allowed: string[]): [string | null, (ds: string) => 
 }
 
 /**
- * Operator-curated landing page. Renders one datastack's recipes and
- * examples at a time, picked from a tab strip — Examples open a fully-
- * configured workspace; Recipes overlay configuration onto the user's
- * currently-loaded cell.
+ * Operator-curated landing page. Renders one datastack's recipes at a
+ * time, picked from a tab strip. Recipes overlay configuration onto the
+ * user's currently-loaded cell.
  *
  * The active datastack is URL-driven (`?ds=`), with a localStorage
  * fallback so a returning user doesn't have to scroll past datastacks
@@ -103,8 +101,7 @@ export function LandingPage() {
         <h2>CAVE Data Viewer</h2>
         <p>
           Browse curated views of CAVE connectome data.{" "}
-          <strong>Examples</strong> open a fully-configured workspace and query;{" "}
-          <strong>recipes</strong> configure decoration tables and plots onto your current cell query.
+          <strong>Recipes</strong> configure decoration tables and plots onto your current cell query.
         </p>
       </header>
       {datastacks.isLoading && <p className="muted">Loading datastacks…</p>}
@@ -153,9 +150,8 @@ function DatastackTours({ ds }: { ds: string }) {
   const invalidCount = getInvalidCount(ds);
 
   const operatorRecipes = data?.recipes ?? [];
-  const examples = data?.examples ?? [];
   const empty =
-    data && examples.length === 0 && operatorRecipes.length === 0 && personalRecipes.length === 0;
+    data && operatorRecipes.length === 0 && personalRecipes.length === 0;
 
   return (
     <section className="landing-datastack">
@@ -166,16 +162,16 @@ function DatastackTours({ ds }: { ds: string }) {
           {invalidCount === 1 ? " it" : " them"} to restore.
         </p>
       )}
-      {tours.isLoading && <p className="muted">Loading examples and recipes…</p>}
+      {tours.isLoading && <p className="muted">Loading recipes…</p>}
       {tours.isError && (
         <p className="error">
-          Failed to load examples and recipes:{" "}
+          Failed to load recipes:{" "}
           {tours.error instanceof Error ? tours.error.message : "unknown"}
         </p>
       )}
       {empty && (
         <p className="muted">
-          No examples or recipes configured for this datastack — load one from a
+          No recipes configured for this datastack — load one from a
           YAML file below, or pick this datastack in the sidebar to start fresh.
         </p>
       )}
@@ -204,16 +200,6 @@ function DatastackTours({ ds }: { ds: string }) {
               </div>
             </>
           )}
-        </div>
-      )}
-      {examples.length > 0 && (
-        <div className="tour-section">
-          <h4>Examples</h4>
-          <div className="tour-grid">
-            {examples.map((ex) => (
-              <ExampleCard key={ex.id} ds={ds} example={ex} />
-            ))}
-          </div>
         </div>
       )}
       <RecipeYamlUploader ds={ds} />
@@ -354,17 +340,14 @@ function RecipeUploadResult({
   );
 }
 
-function summarizeTour(t: Example | Recipe): string {
-  // Example has no `kind` field (it's always connectivity-flavored in v1)
-  // and carries the connectivity fields directly. Recipes dispatch on
-  // `kind` for the per-kind summary.
-  if (!("kind" in t) || t.kind === "connectivity") {
-    return summarizeConnectivity(t as ConnectivityRecipe | Example);
+function summarizeTour(t: Recipe): string {
+  if (t.kind === "connectivity") {
+    return summarizeConnectivity(t as ConnectivityRecipe);
   }
   return summarizeExplorer(t);
 }
 
-function summarizeConnectivity(t: ConnectivityRecipe | Example): string {
+function summarizeConnectivity(t: ConnectivityRecipe): string {
   const parts: string[] = [];
   if (t.decoration_tables.length > 0) {
     parts.push(
@@ -397,27 +380,6 @@ function summarizeExplorer(t: Extract<Recipe, { kind: "explorer" }>): string {
     parts.push(`${s.selection.length} selected`);
   }
   return parts.join(" · ");
-}
-
-function ExampleCard({ ds, example }: { ds: string; example: Example }) {
-  const navigate = useNavigate();
-  const open = () => {
-    const params = buildExampleParams(ds, example);
-    navigate(`/neuron?${params.toString()}`);
-  };
-  return (
-    <div className="tour-card">
-      <h5>{example.title}</h5>
-      {example.description && <p className="tour-desc">{example.description}</p>}
-      <p className="tour-meta">
-        v{example.mat_version} · root {example.root.slice(0, 6)}…{example.root.slice(-4)}
-        {summarizeTour(example) && <> · {summarizeTour(example)}</>}
-      </p>
-      <button type="button" className="tour-cta" onClick={open}>
-        Open
-      </button>
-    </div>
-  );
 }
 
 function RecipeCard({ ds, recipe, personal }: { ds: string; recipe: Recipe; personal?: boolean }) {

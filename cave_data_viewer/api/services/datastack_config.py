@@ -579,14 +579,6 @@ class DatastackConfig(BaseModel):
     # manifest referenced from this block — see FeatureExplorerConfig.
     feature_explorer: FeatureExplorerConfig | None = None
 
-    # ---- tours: operator-curated landing-page entries -------------------------
-    # `examples` are fully-specified workspaces (ds + mv + root + decorations
-    # + plots + filters). The landing page renders them as "Open" cards.
-    # `recipes` are configuration overlays — same shape minus mv+root — and
-    # apply onto the user's currently-loaded cell. Both are optional; a
-    # datastack with neither just shows the empty-state on the landing page.
-    examples: list[Example] = Field(default_factory=list)
-    recipes: list[Recipe] = Field(default_factory=list)
 
 
 # Cache stores `(cfg, signature)` so we can invalidate when a watched YAML
@@ -603,26 +595,12 @@ def _yaml_signature(paths: list[Path]) -> tuple:
 
 
 def _validate_tour_ids(cfg: DatastackConfig, datastack: str) -> None:
-    """Fail fast on duplicate tour ids within a datastack.
-
-    The SPA uses ids as React keys on the landing page; duplicates would
-    produce silent collisions and shifty UI behavior that's painful to
-    diagnose. We catch it at config-load time so operators see the failure
-    immediately rather than after a deploy.
-
-    Examples and recipes share an id namespace within a datastack — both
-    flavors render side by side on the landing page, and users may refer
-    to them interchangeably ("apply the 'depth-stratification' tour").
+    """No-op placeholder: inline examples/recipes fields were removed from
+    DatastackConfig in Task 2.3. Operator recipes are now loaded via
+    RecipeRegistry from per-file YAMLs under config/recipes/<ds>/; examples
+    live under config/examples/<ds>/. The RecipeRegistry performs its own
+    id validation at load time.
     """
-    seen: dict[str, str] = {}
-    for kind, items in (("example", cfg.examples), ("recipe", cfg.recipes)):
-        for item in items:
-            if item.id in seen:
-                raise ValueError(
-                    f"Datastack {datastack!r}: duplicate tour id {item.id!r} "
-                    f"({seen[item.id]} vs {kind})."
-                )
-            seen[item.id] = kind
 
 
 def load_datastack_config(datastack: str) -> DatastackConfig:

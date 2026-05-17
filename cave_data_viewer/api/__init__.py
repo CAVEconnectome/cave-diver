@@ -11,6 +11,7 @@ from .endpoints import api_bp
 from .json_provider import NumpyJSONProvider
 from .services.decoration import init_decoration_service
 from .services.longlived_registry import LonglivedRegistry
+from .services.recipe_registry import RecipeRegistry
 from .services.object_store import build_info_store, build_l2_stores, build_userdata_store
 from .services.request_state import init_request_state
 from .services.timing import init_timing
@@ -33,6 +34,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     #      `init_decoration_service`, which now consumes the shared
     #      `dcv_l2_writer` for its own L2-write fan-out.
     _init_longlived_registry(app)
+    app.extensions["dcv_recipe_registry"] = RecipeRegistry.from_env()
     _init_userdata_store(app)
     _init_l2_immutable_caches(app)
     init_decoration_service(app)
