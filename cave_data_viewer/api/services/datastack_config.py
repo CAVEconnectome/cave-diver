@@ -320,42 +320,29 @@ class CellIdLookup(BaseModel):
 
 
 class FeatureExplorerConfig(BaseModel):
-    """Per-datastack Feature Explorer enablement + manifest pointer.
+    """Per-datastack Feature Explorer enablement.
 
-    The datastack YAML carries only datastack-level facts — what's tightly tied
-    to the datastack's CAVE state. The embedding catalog itself (which parquets
-    exist, their axes, feature columns, kNN defaults) lives in the GCS-hosted
-    manifest file referenced by `manifest_uri`, so adding new feature data is
-    an edit-in-GCS workflow rather than a backend redeploy.
+    The embedding catalog itself lives at the convention path
+    ``<CDV_FEATURE_TABLES_BASE_URI>/feature_tables/<datastack>/``,
+    one subdir per datastack. There is no per-datastack
+    ``manifest_uri`` — the URI is a deterministic function of the
+    deploy-time base + the datastack name.
 
-    `cell_id_source_table` names the CAVE table that defines the cell_id
-    namespace used by every parquet discoverable through the manifest. It is
-    the *default* source table for this datastack — multi-dataset manifests
-    can override it per-datastack via a `datastacks:` block (see
-    `services/embeddings/manifest.py::DatastackEntry`), and the resolver
-    prefers the manifest's override when both are set. Single-datastack
-    manifests omit the override and inherit from this field.
+    ``cell_id_source_table`` names the CAVE table that defines the
+    cell_id namespace used by every parquet under this datastack's
+    feature_tables subdir. Optional at this layer: a per-FT YAML can
+    set its own ``cell_id_source_table`` and override this fallback.
+    When neither is set, downstream resolver paths surface a clean
+    422 at resolve time.
 
-    Optional even when `enabled` is True: the multi-dataset path lets a
-    manifest declare the source table itself (useful when the same manifest
-    spans datastacks whose source-table conventions differ). When neither
-    the YAML nor the manifest names a source table, downstream resolution
-    paths surface a clean 422; the field is checked at resolve time rather
-    than at config-load time so the explorer can come up for datastacks
-    that participate as data-only (no resolver needed) in a joint manifest.
-
-    Kept as a distinct field from `root_id_lookup_main_table` (rather than
-    reusing it) so a future datastack with a multi-table reverse-lookup
-    chain doesn't ambiguate which table anchors the embedding namespace.
-    In practice they will usually point at the same table.
-
-    `manifest_uri` supports `gs://`, `file://`, and `http(s)://` schemes. The
-    backend fetches it through a SWR cache (soft TTL ~5 min) so manifest edits
-    propagate without a restart.
+    Kept as a distinct field from ``root_id_lookup_main_table`` so a
+    future datastack with a multi-table reverse-lookup chain doesn't
+    ambiguate which table anchors the embedding namespace. In practice
+    they will usually point at the same table.
     """
+
     enabled: bool = False
     cell_id_source_table: str | None = None
-    manifest_uri: str | None = None
 
 
 class TourPlotBindings(BaseModel):

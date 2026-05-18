@@ -93,23 +93,28 @@ class ManifestFeatureTableSource:
 
 def source_for(datastack: str, ds_cfg) -> ManifestFeatureTableSource | None:
     """Build a ``ManifestFeatureTableSource`` from a loaded
-    ``DatastackConfig``, or return ``None`` when the feature explorer is
-    disabled / unconfigured for the datastack.
+    ``DatastackConfig``, or return ``None`` when the feature explorer
+    is disabled for the datastack.
+
+    The manifest URI is computed from the deploy-time base
+    (``app.config["FEATURE_TABLES_BASE_URI"]``, set from
+    ``CDV_FEATURE_TABLES_BASE_URI``) joined with the convention
+    ``feature_tables/<datastack>/`` path. Datastack YAMLs no longer
+    carry a per-datastack ``manifest_uri``.
 
     Endpoint code is expected to short-circuit on ``None`` (404 the
-    request or omit the route from the listing). Keeping that contract
-    on the caller rather than raising lets endpoints decide between "no
-    feature tables available" and "explorer disabled" UX.
+    request or omit the route from the listing).
 
     ``ds_cfg`` is the result of ``load_datastack_config(datastack)``.
-    Typed as ``Any`` here to avoid a circular import —
-    ``datastack_config`` doesn't know about the embeddings package and
-    shouldn't.
+    Typed as ``Any`` here to avoid a circular import.
     """
     fe = getattr(ds_cfg, "feature_explorer", None)
-    if fe is None or not fe.enabled or not fe.manifest_uri:
+    if fe is None or not fe.enabled:
         return None
+    from .manifest import resolve_manifest_uri
+    base = current_app.config["FEATURE_TABLES_BASE_URI"]
+    manifest_uri = resolve_manifest_uri(base, datastack)
     project = current_app.config.get("GCS_CACHE_PROJECT")
     return ManifestFeatureTableSource(
-        datastack, fe.manifest_uri, gcs_project=project
+        datastack, manifest_uri, gcs_project=project
     )

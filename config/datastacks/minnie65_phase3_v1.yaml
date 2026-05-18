@@ -43,4 +43,3 @@ decoration_warmup:
 feature_explorer:
   enabled: true
   cell_id_source_table: nucleus_detection_v0
-  manifest_uri: file:///Users/caseysm/Work/Code/cave-data-viewer/config/feature_tables/minnie65_phase3_v1/

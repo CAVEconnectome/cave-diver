@@ -20,3 +20,42 @@ def test_resolve_manifest_uri_normalizes_missing_trailing_slash():
     defensive)."""
     uri = resolve_manifest_uri("gs://my-bucket", "minnie65_public")
     assert uri == "gs://my-bucket/feature_tables/minnie65_public/"
+
+
+def test_source_for_uses_convention_when_enabled(monkeypatch):
+    """source_for() builds a ManifestFeatureTableSource whose
+    manifest_uri is computed from app.config + datastack name."""
+    from cave_data_viewer.api import create_app
+    from cave_data_viewer.api.services.datastack_config import (
+        DatastackConfig, FeatureExplorerConfig,
+    )
+    from cave_data_viewer.api.services.embeddings.source import source_for
+
+    monkeypatch.setenv("CDV_FEATURE_TABLES_BASE_URI", "gs://my-bucket/")
+    app = create_app()
+    with app.app_context():
+        ds_cfg = DatastackConfig(
+            feature_explorer=FeatureExplorerConfig(
+                enabled=True,
+                cell_id_source_table="nucleus_detection_v0",
+            ),
+        )
+        src = source_for("minnie65_public", ds_cfg)
+        assert src is not None
+        assert src.manifest_uri == "gs://my-bucket/feature_tables/minnie65_public/"
+
+
+def test_source_for_returns_none_when_disabled():
+    """Explorer disabled => no source."""
+    from cave_data_viewer.api import create_app
+    from cave_data_viewer.api.services.datastack_config import (
+        DatastackConfig, FeatureExplorerConfig,
+    )
+    from cave_data_viewer.api.services.embeddings.source import source_for
+
+    app = create_app()
+    with app.app_context():
+        ds_cfg = DatastackConfig(
+            feature_explorer=FeatureExplorerConfig(enabled=False),
+        )
+        assert source_for("minnie65_public", ds_cfg) is None

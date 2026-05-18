@@ -46,9 +46,10 @@ root_id_lookup_alt_tables:
 # up new pods the warmer should NOT immediately hit CAVE — wait a few minutes
 # so a scaling burst doesn't multiplex into a thundering herd.
 decoration_warmup:
-  enabled: false
+  enabled: true
   tables:
-    - aibs_metamodel_celltypes_v661
+    - proofreading_status_and_strategy
+    - cell_type_multifeature_combo
   warm_soma_table: true
   interval_seconds: 3600       # one hour
   startup_delay_seconds: 180   # three minutes
@@ -63,6 +64,5 @@ decoration_warmup:
 # produced by `scripts/make_sample_embedding.py`. For production, point at
 # a gs://... manifest file in the cache bucket.
 feature_explorer:
-  enabled: false
+  enabled: true
   cell_id_source_table: nucleus_detection_v0
-  manifest_uri: "file:///tmp/cdv-embeddings/manifest.yaml"
