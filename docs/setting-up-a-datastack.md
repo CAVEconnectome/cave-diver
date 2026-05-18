@@ -513,32 +513,49 @@ The generated file is a heavily commented skeleton; edit, uncomment, and commit.
 
 ### `scripts/scaffold_feature_explorer.py`
 
-Opens a feature-table parquet, introspects its schema, and emits a starter manifest with feature / categorical / depth / audit columns and embedding axes pre-classified. This is the meatier helper of the two: getting the column buckets right by hand is tedious.
+Opens a feature-table parquet, introspects its schema, and walks you through an interactive review (built with `rich`) before emitting a starter manifest. The script validates the output against the Pydantic `Manifest` schema before writing, so an authored manifest is parseable by the running backend by construction.
 
 ```bash
+# Interactive (recommended)
+uv run python scripts/scaffold_feature_explorer.py \
+    --parquet path/to/features.parquet \
+    --feature-table-id morpho_v1
+
+# Non-interactive — accept heuristic defaults, no prompts
 uv run python scripts/scaffold_feature_explorer.py \
     --parquet path/to/features.parquet \
     --feature-table-id morpho_v1 \
-    --out /tmp/manifest.yaml
+    --non-interactive --id-column cell_id --out /tmp/manifest.yaml
 ```
+
+The interactive flow is six steps:
+
+1. **Pick id column.** Candidates (canonical `cell_id`/`id`, then any int column ending in `_id`, then any int column) are shown with dtype + a head sample. Pick by number or by name.
+2. **Review column classification.** A `rich` table lists every column with its dtype, auto-detected bucket (feature / categorical / depth / audit / id_like / axis / unclassified), and a head sample. You can reassign any column to any bucket.
+3. **Title + description** for the feature table.
+4. **Embeddings.** Each auto-detected axis pair is shown; you confirm + pick a `default_color_by` from the categorical columns. You can also add embeddings manually.
+5. **Category groups** for the UI channel picker. Define as many as you want; columns are picked by number (with range syntax like `1-5,7,9-12`), bare name, or the special token `all`.
+6. **kNN scaling + clip percentiles** for the manifest's `knn:` block. Defaults are `zscore` + `(0.1, 99.9)` clip.
+
+After step 6 the script runs Pydantic validation; on success it writes the YAML and prints a copy-pasteable `feature_explorer:` block for the datastack YAML.
 
 Options:
 - `--parquet <path>` (required) — the feature parquet to inspect.
 - `--feature-table-id <id>` (required) — the manifest's `feature_tables[].id`.
 - `--out <path>` — output manifest path (default: `/tmp/manifest.yaml`).
 - `--parquet-uri <uri>` — the URI to embed in `source.uri`. Defaults to `file://<absolute-path>` for local development; pass `gs://...` for production manifests.
-- `--id-column <name>` — override the cell_id column detection.
-- `--force` — overwrite the output file.
+- `--id-column <name>` — pre-resolve the id column (skips the prompt).
+- `--non-interactive` — accept all heuristic defaults, no prompts. Useful for scripted regeneration. Requires `--id-column` when no canonical id column is auto-detected.
+- `--force` — overwrite an existing output file.
 
-The script classifies columns using these rules:
+The classification heuristic uses these rules (reviewable interactively in step 2):
 
-| Column heuristic | Buckets into |
+| Column heuristic | Bucket |
 |------------------|--------------|
-| Named `cell_id`, `id`, integer-typed | `id_column` |
+| Named `cell_id` / `id`, integer-typed | `id_column` |
+| Other integer columns ending in `_id` | id-like (excluded from features) |
 | Numeric, name contains `depth` | `depth_columns` + `feature_columns` |
-| Pair: `<prefix>_x` / `<prefix>_y` where the pair is recognizable as an embedding axis (`umap`, `tsne`, `pca`, `phate`, …) | one `embeddings:` entry with that axis pair |
-| Named `source_root_id`, `source_mat_version` (or `*_source_root*`, `*_source_mat_version*`) | `audit.source_root_column` / `audit.source_mat_version_column` |
-| Numeric, not in audit/axes | `feature_columns` |
-| Object / string / categorical dtype | `categorical_columns` |
-
-The output is a complete manifest with TODO comments marking decisions the script can't make for you (e.g. choosing `default_color_by` for an embedding, or splitting features into UI categories). Review and edit before deploying.
+| Pair `<prefix>_x` / `<prefix>_y` where the prefix contains `umap`/`tsne`/`pca`/`phate`/`mds`/`isomap`/`lle` | one `embeddings:` entry with that axis pair |
+| Named matching `source[_-]?root` / `source[_-]?mat[_-]?version` | `audit.source_root_column` / `audit.source_mat_version_column` |
+| Other numeric | `feature_columns` |
+| Object / string / categorical / bool | `categorical_columns` |
