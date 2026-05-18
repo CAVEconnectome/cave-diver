@@ -24,6 +24,11 @@
 # Datastack overrides: mount a directory of YAMLs at /etc/cdv/datastacks
 #   docker run ... -v /local/datastacks:/etc/cdv/datastacks cdv
 #
+# Feature-table catalog override: point at a bind-mount or GCS:
+#   docker run ... -v /local/ft:/etc/cdv/feature_tables \
+#     -e CDV_FEATURE_TABLES_BASE_URI=file:///etc/cdv/ cdv
+#   docker run ... -e CDV_FEATURE_TABLES_BASE_URI=gs://my-bucket/ cdv
+#
 # Auth bypass for local testing only — never set in prod:
 #   docker run ... -e CDV_DEV_AUTH_BYPASS=1 cdv
 
@@ -117,6 +122,19 @@ COPY --from=frontend /app/frontend/dist /app/frontend/dist
 # repo's `config/datastacks/` are already in the image at `/app/config/`.
 RUN mkdir -p /etc/cdv/datastacks
 ENV CDV_DATASTACK_CONFIG_DIR=/etc/cdv/datastacks
+
+# Mount point for an external feature-table catalog. By default the
+# image's bundled `/app/config/` is used (CDV_FEATURE_TABLES_BASE_URI
+# is intentionally unset). Override at run time to point at a bind-
+# mounted dir or a GCS prefix:
+#
+#   docker run ... -v /local/feature_tables:/etc/cdv/feature_tables \
+#     -e CDV_FEATURE_TABLES_BASE_URI=file:///etc/cdv/ cdv
+#
+# or for production:
+#
+#   docker run ... -e CDV_FEATURE_TABLES_BASE_URI=gs://my-bucket/ cdv
+RUN mkdir -p /etc/cdv/feature_tables
 
 # Run as a non-root user — defense in depth against container escape via
 # any Python deserialization bug. uid/gid 1000 matches the conventional
