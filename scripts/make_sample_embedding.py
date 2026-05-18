@@ -1,9 +1,9 @@
-"""Generate a small synthetic embedding parquet + manifest for local Feature
-Explorer development.
+"""Generate a small synthetic embedding parquet + feature-table YAML for local
+Feature Explorer development.
 
-Outputs (default):
-    /tmp/cdv-embeddings/morpho_umap_sample.parquet
-    /tmp/cdv-embeddings/manifest.yaml
+Outputs (default, using --datastack minnie65_public):
+    <repo>/config/feature_tables/minnie65_public/morpho_sample.parquet
+    <repo>/config/feature_tables/minnie65_public/morpho_sample.yaml
 
 The parquet's `cell_id` values are synthetic — they don't correspond to real
 nucleus_detection_v0 rows. That's fine for the explorer's internal flows
@@ -12,9 +12,14 @@ nucleus_detection_v0 rows. That's fine for the explorer's internal flows
 every cell as `missing` unless real cell_ids are supplied via --ids-csv;
 this is the expected and correct behavior for fully-synthetic dev data.
 
+The per-FT YAML omits `source.uri`; the loader default-fills it to
+`<prefix>/<id>.parquet` at load time, so the committed YAML contains no
+host-absolute paths.
+
 Usage:
     uv run python scripts/make_sample_embedding.py
-    uv run python scripts/make_sample_embedding.py --outdir /tmp/cdv-embeddings --n 2000
+    uv run python scripts/make_sample_embedding.py --datastack minnie65_public --n 2000
+    uv run python scripts/make_sample_embedding.py --outdir /tmp/my-embeddings --n 500
 
 To exercise the resolver end-to-end, supply a CSV of real cell_ids drawn
 from `nucleus_detection_v0` at a known mat_version:
@@ -121,9 +126,12 @@ def _build_frame(n: int, rng: np.random.Generator, cell_ids: Sequence[int] | Non
 
 
 def _build_feature_table(parquet_path: Path) -> dict:
-    """One per-file FeatureTableSpec (schema v1) pointing at the local
-    parquet. URI is file:// so the dev backend resolves without GCS
-    auth. Returned ready for yaml.safe_dump."""
+    """One per-file FeatureTableSpec (schema v1) for the local parquet.
+
+    `source.uri` is intentionally omitted; the loader default-fills it to
+    `<prefix>/<id>.parquet` at load time so the committed YAML contains no
+    host-absolute paths.
+    """
     return {
         "schema_version": 1,
         "id": "morpho_sample",
@@ -134,7 +142,7 @@ def _build_feature_table(parquet_path: Path) -> dict:
             "nucleus_detection_v0 rows unless the generator was run with "
             "--ids-csv."
         ),
-        "source": {"kind": "parquet", "uri": f"file://{parquet_path}"},
+        "source": {"kind": "parquet"},  # uri default-filled at load time to <prefix>/<id>.parquet
         "id_column": "cell_id",
         "cell_id_source_table": "nucleus_detection_v0",
         "feature_columns": [
@@ -187,39 +195,41 @@ def _build_feature_table(parquet_path: Path) -> dict:
 
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--outdir", type=Path, default=Path("/tmp/cdv-embeddings"))
+    p.add_argument("--datastack", default="minnie65_public", help="datastack name (used to compute default --outdir)")
+    p.add_argument("--outdir", type=Path, default=None, help="override output directory (default: <repo>/config/feature_tables/<datastack>/)")
     p.add_argument("--n", type=int, default=1000, help="number of cells (ignored when --ids-csv is given)")
     p.add_argument("--ids-csv", type=Path, default=None, help="one-column CSV of real cell_ids to use as keys")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args(argv)
 
-    args.outdir.mkdir(parents=True, exist_ok=True)
+    # Resolve output dir: --outdir overrides; otherwise convention.
+    if args.outdir is not None:
+        outdir = args.outdir
+    else:
+        repo_root = Path(__file__).resolve().parents[1]
+        outdir = repo_root / "config" / "feature_tables" / args.datastack
+    outdir.mkdir(parents=True, exist_ok=True)
+
     rng = np.random.default_rng(args.seed)
 
     real_ids = _load_real_cell_ids(args.ids_csv) if args.ids_csv else None
     frame = _build_frame(args.n, rng, real_ids)
 
-    parquet_path = args.outdir / "morpho_umap_sample.parquet"
+    parquet_path = outdir / "morpho_sample.parquet"
     frame.to_parquet(parquet_path, index=False)
     print(f"wrote {parquet_path}  ({len(frame)} rows, {len(frame.columns)} cols)")
 
-    # v1 catalog shape: each feature_table is its own .yaml file in a
-    # directory the datastack YAML's manifest_uri points at. The
-    # filename basename must equal the file's `id` (validated at load
-    # time).
-    catalog_dir = args.outdir / "feature_tables"
-    catalog_dir.mkdir(parents=True, exist_ok=True)
     ft = _build_feature_table(parquet_path)
-    ft_path = catalog_dir / f"{ft['id']}.yaml"
+    ft_path = outdir / f"{ft['id']}.yaml"
     ft_path.write_text(yaml.safe_dump(ft, sort_keys=False, allow_unicode=True))
     print(f"wrote {ft_path}")
 
     print()
-    print("Next: point a datastack config at this directory, e.g.")
+    print(f"sample catalog ready at {outdir}/")
+    print(f"enable in config/datastacks/{args.datastack}.yaml:")
     print("  feature_explorer:")
     print("    enabled: true")
-    print("    cell_id_source_table: nucleus_detection_v0   # optional fallback")
-    print(f"    manifest_uri: file://{catalog_dir}/")
+    print("    cell_id_source_table: nucleus_detection_v0")
 
     return 0
 
