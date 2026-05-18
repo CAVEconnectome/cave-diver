@@ -25,7 +25,6 @@ Schema v1 (current): each FeatureTableSpec is self-contained. It owns:
 - the similarity controls (``scaling``, ``clip_percentiles``,
   ``standardize``) — moved from the old manifest-level ``knn`` block so
   one table can be zscored while another is raw
-- the optional ``datastacks`` list (multi-datastack participation)
 
 Caching strategy:
 
@@ -61,8 +60,8 @@ from .uri import fetch_bytes, list_yaml_uris
 logger = logging.getLogger(__name__)
 
 # v1 is the current shape: each per-file FeatureTableSpec self-contained,
-# scaling/clip/cell_id_source_table/datastacks moved off the (removed)
-# top-level manifest. Older schema versions are not supported — migrate.
+# scaling/clip/cell_id_source_table moved off the (removed) top-level
+# manifest. Older schema versions are not supported — migrate.
 SUPPORTED_SCHEMA_VERSIONS: frozenset[int] = frozenset({1})
 
 
@@ -175,22 +174,6 @@ class EmbeddingSpec(BaseModel):
     depth_axis: Literal["x", "y", None] = None
 
 
-class DatastackEntry(BaseModel):
-    """One datastack participating in a feature-table's catalog.
-
-    Bare-name form is allowed in YAML (``datastacks: [foo, bar]``); the
-    loader coerces strings via :func:`_coerce_datastacks`.
-
-    ``cell_id_source_table``, when set, overrides the feature table's
-    own ``cell_id_source_table`` for THIS datastack only. Used in joint
-    manifests where one parquet spans datastacks with different source-table
-    conventions and a single per-table value can't represent every row.
-    """
-
-    name: str
-    cell_id_source_table: str | None = None
-
-
 class FeatureTableSpec(BaseModel):
     """One per-file feature-table YAML. Owns the data (a parquet keyed
     by cell_id), the columns the explorer can plot / filter / kNN over,
@@ -293,13 +276,6 @@ class FeatureTableSpec(BaseModel):
     standardize: bool = True
     clip_percentiles: tuple[float, float] | None = (0.1, 99.9)
 
-    # Multi-datastack participation. When empty (the typical case), the
-    # feature table belongs to whichever datastack pointed at this
-    # directory via `feature_explorer.manifest_uri`. When populated, the
-    # table is shared across the listed datastacks.
-    datastacks: list[DatastackEntry] = Field(default_factory=list)
-
-
 class Manifest(BaseModel):
     """Parsed + validated feature-table catalog.
 
@@ -312,38 +288,23 @@ class Manifest(BaseModel):
     feature_tables: list[FeatureTableSpec]
 
 
-def effective_datastacks(
-    ft: FeatureTableSpec, parent_datastack: str
-) -> list[DatastackEntry]:
-    """Return the datastacks for ``ft``, defaulting to the parent.
-
-    Single-datastack feature tables omit the ``datastacks:`` block; this
-    helper fills in the implicit single-element list so downstream code
-    can treat every feature table as having an explicit datastack set.
-    """
-    if ft.datastacks:
-        return ft.datastacks
-    return [DatastackEntry(name=parent_datastack)]
-
-
 def effective_cell_id_source_table(
     ft: FeatureTableSpec, datastack: str, fallback: str | None
 ) -> str | None:
     """Pick the cell_id source table for ``ft`` in ``datastack``.
 
     Precedence:
-      1. Per-datastack override on the feature table
-         (``ft.datastacks[X].cell_id_source_table``).
-      2. The feature table's own ``cell_id_source_table``.
-      3. The datastack YAML's ``feature_explorer.cell_id_source_table``
-         (passed in as ``fallback``).
+      1. The feature table's own ``cell_id_source_table``.
+      2. The datastack YAML's
+         ``feature_explorer.cell_id_source_table`` (passed in as
+         ``fallback``).
 
-    Returns None when no source table is declared anywhere — downstream
-    consumers (e.g. the resolver) surface a 422 in that case.
+    Returns None when no source table is declared anywhere —
+    downstream consumers (e.g. the resolver) surface a 422 in
+    that case. The ``datastack`` argument is retained for log
+    messages / future use; current implementation does not branch
+    on it.
     """
-    for entry in ft.datastacks:
-        if entry.name == datastack and entry.cell_id_source_table:
-            return entry.cell_id_source_table
     if ft.cell_id_source_table:
         return ft.cell_id_source_table
     return fallback
@@ -447,10 +408,6 @@ def _fetch_and_validate_ft(
             )
             return None
 
-    # Datastacks block accepts bare-name strings; coerce before validation.
-    if "datastacks" in data:
-        data["datastacks"] = _coerce_datastacks(data["datastacks"], uri=uri)
-
     # Validate the parent shape (without embeddings/categories) so per-entry
     # failures don't sink the file; attach the validated nested lists after.
     raw_embeddings = data.get("embeddings") or []
@@ -536,30 +493,6 @@ def _basename_of(uri: str) -> str:
         if name.endswith(ext):
             return name[: -len(ext)]
     return name
-
-
-def _coerce_datastacks(raw, *, uri: str) -> list:
-    """Allow bare-name strings in the YAML datastacks block. Returns a
-    list of dicts ready for Pydantic to validate as ``DatastackEntry``."""
-    if not isinstance(raw, list):
-        logger.warning(
-            "feature_table file %s: `datastacks` must be a list, got %s; ignoring",
-            uri, type(raw).__name__,
-        )
-        return []
-    out: list = []
-    for i, item in enumerate(raw):
-        if isinstance(item, str):
-            out.append({"name": item})
-        elif isinstance(item, dict):
-            out.append(item)
-        else:
-            logger.warning(
-                "feature_table file %s: skipping datastacks entry %d "
-                "(expected str or mapping, got %s)",
-                uri, i, type(item).__name__,
-            )
-    return out
 
 
 def get_manifest(

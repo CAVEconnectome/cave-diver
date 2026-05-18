@@ -52,7 +52,6 @@ from ..services.embeddings import (
     EmbeddingSpec,
     FeatureTableQuery,
     FeatureTableSpec,
-    effective_datastacks,
     load_feature_table_frame,
     resolve_cell_ids_to_root_ids,
     source_for,
@@ -201,27 +200,10 @@ def list_feature_tables(ds: str):
             f"could not load feature explorer manifest: {exc}",
         ) from exc
 
-    # ``datastacks`` is now per-feature-table (v1 schema). Aggregate the
-    # union across all loaded tables so the SPA still gets one catalog-
-    # level list; falls back to ``[ds]`` when no table declares any.
-    # First-occurrence wins for the per-datastack cell_id_source_table
-    # override (consistent with the rest of the registry's first-wins
-    # duplicate-handling).
-    declared_by_name: dict[str, str | None] = {}
-    for ft in manifest.feature_tables:
-        for entry in effective_datastacks(ft, ds):
-            if entry.name not in declared_by_name:
-                declared_by_name[entry.name] = entry.cell_id_source_table
-    if not declared_by_name:
-        declared_by_name = {ds: None}
     return jsonify(
         {
             "enabled": True,
             "cell_id_source_table": cfg.feature_explorer.cell_id_source_table,
-            "datastacks": [
-                {"name": name, "cell_id_source_table": cst}
-                for name, cst in declared_by_name.items()
-            ],
             "feature_tables": [_feature_table_summary(ft) for ft in manifest.feature_tables],
         }
     )

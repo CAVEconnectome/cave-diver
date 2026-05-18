@@ -24,7 +24,6 @@ from .feature_matrix import EmbeddingMatrix, build_matrix, get_matrix
 from .loader import load_feature_table_frame
 from .query import FeatureTableQuery
 from .manifest import (
-    DatastackEntry,
     EmbeddingSpec,
     FeatureCategorySpec,
     FeatureTableAudit,
@@ -33,7 +32,6 @@ from .manifest import (
     Manifest,
     SUPPORTED_SCHEMA_VERSIONS,
     effective_cell_id_source_table,
-    effective_datastacks,
     fetch_and_parse_manifest,
     get_manifest,
 )
@@ -52,7 +50,6 @@ __all__ = [
     "ManifestFeatureTableSource",
     "source_for",
     # Manifest schema + helpers.
-    "DatastackEntry",
     "EmbeddingSpec",
     "FeatureCategorySpec",
     "FeatureTableAudit",
@@ -61,7 +58,6 @@ __all__ = [
     "Manifest",
     "SUPPORTED_SCHEMA_VERSIONS",
     "effective_cell_id_source_table",
-    "effective_datastacks",
     "fetch_and_parse_manifest",
     "get_manifest",
     # Parquet loader.

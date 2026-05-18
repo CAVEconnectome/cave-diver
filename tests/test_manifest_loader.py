@@ -151,3 +151,41 @@ def test_explicit_source_uri_wins_over_default(monkeypatch, tmp_path):
     with app.app_context():
         manifest = fetch_and_parse_manifest(f"file://{ft_dir}/")
         assert manifest.feature_tables[0].source.uri == "gs://shared-bucket/morpho.parquet"
+
+
+def test_datastacks_field_is_no_longer_part_of_schema(tmp_path, monkeypatch, caplog):
+    """The legacy datastacks: block is rejected as unknown extra; the
+    file still loads because Pydantic defaults to extra=ignore but the
+    field never lands on the parsed model."""
+    from cave_data_viewer.api import create_app
+    from cave_data_viewer.api.services.embeddings.manifest import (
+        FeatureTableSpec, fetch_and_parse_manifest,
+    )
+
+    # Confirm the schema dropped the field.
+    assert "datastacks" not in FeatureTableSpec.model_fields
+
+    ft_dir = tmp_path / "feature_tables" / "ds_a"
+    ft_dir.mkdir(parents=True)
+    (ft_dir / "morpho.yaml").write_text(
+        "schema_version: 1\n"
+        "id: morpho\n"
+        "title: Morpho\n"
+        "source: {kind: parquet, uri: gs://x/morpho.parquet}\n"
+        "id_column: cell_id\n"
+        "cell_id_source_table: nucleus_detection_v0\n"
+        "datastacks: [a, b]\n"   # legacy field — should be ignored at parse
+    )
+
+    app = create_app()
+    with app.app_context():
+        manifest = fetch_and_parse_manifest(f"file://{ft_dir}/")
+        # File loads; legacy field doesn't crash the parser.
+        assert len(manifest.feature_tables) == 1
+
+
+def test_effective_datastacks_helper_removed():
+    """The helper is gone from the embeddings package."""
+    import cave_data_viewer.api.services.embeddings as embeddings_pkg
+    assert not hasattr(embeddings_pkg, "effective_datastacks")
+    assert not hasattr(embeddings_pkg, "DatastackEntry")

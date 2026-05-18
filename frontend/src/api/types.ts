@@ -554,28 +554,11 @@ export interface SimilarityDefaults {
   clip_percentiles: [number, number] | null;
 }
 
-/** One participant in a manifest's datastack set. Single-ds manifests have
- *  exactly one entry (the parent datastack). Multi-ds manifests (phase 2)
- *  list every participating datastack so the SPA can detect joint-embedding
- *  mode up front and toggle multi-select / per-row routing UI without a
- *  manifest re-fetch. */
-export interface ManifestDatastackEntry {
-  name: string;
-  /** Per-datastack override for `cell_id_source_table`. When set, takes
-   *  precedence over the datastack YAML's value — used by joint manifests
-   *  where different participants anchor on different source tables. */
-  cell_id_source_table: string | null;
-}
-
 export interface FeatureTableListResponse {
   /** When false, every other field is omitted — the explorer is not
    *  configured for this datastack and the SPA should hide /explore. */
   enabled: boolean;
   cell_id_source_table?: string;
-  /** Manifest-declared participating datastacks. Always populated when
-   *  `enabled` is true; single-ds (or pre-phase-1) manifests collapse to a
-   *  one-element list naming the request's `ds`. */
-  datastacks?: ManifestDatastackEntry[];
   knn?: SimilarityDefaults;
   feature_tables?: FeatureTableListItem[];
 }
