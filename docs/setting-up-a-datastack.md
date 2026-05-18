@@ -185,16 +185,31 @@ categorical_columns:
   - predicted_class
   - predicted_subclass
 
-# Numeric columns with spatial meaning (positions, distances, depths).
-# Overlaps with `feature_columns` — a spatial column is still a feature.
-# Reserved for UI groupings and future spatial-aware visualizations.
-spatial_columns:
+# Numeric columns with spatial meaning, split by whether they live
+# BEFORE or AFTER the aligned-volume's spatial transform. Both overlap
+# with `feature_columns` — spatial columns are still features.
+#
+# Pre-transform: the volume's native frame. Used for Neuroglancer URLs
+# (image data + segmentation live in this frame). Bundling them in
+# the feature parquet caches the cell_id-source-table → position
+# lookup so the explorer doesn't pay the join cost at query time.
+spatial_pre_columns:
+  - pt_position_x
+  - pt_position_y
+  - pt_position_z
+
+# Post-transform: biologically meaningful coords (cortical depth,
+# layer-aware distances) — anything the aligned-volume's spatial
+# transform produced. This is what analyses operate on.
+spatial_post_columns:
   - soma_depth_y
   - soma_to_nucleus_center_dist_um
 
-# A *special case* of spatial that the renderer consumes: depth-shaped
-# columns trigger axis flip + cortical layer markers when bound to a
-# plot axis. Every depth column should also appear in spatial_columns.
+# A *strict subset* of spatial_post_columns. The renderer special-cases
+# depth: when a depth column is bound to a plot axis, the axis
+# auto-flips and cortical layer boundary markers overlay. Depth is
+# necessarily post-transform — the cortical axis is what the transform
+# produces.
 depth_columns:
   - soma_depth_y
 
@@ -594,12 +609,13 @@ The classification heuristic uses these rules (reviewable interactively in step 
 |------------------|--------------|
 | Named `cell_id` / `id`, integer-typed | `id_column` |
 | Other integer columns ending in `_id` | id-like (excluded from features) |
-| Numeric, name contains `depth` | **spatial (depth)** — added to `feature_columns`, `spatial_columns`, AND `depth_columns` |
-| Numeric, name ends in `_x` / `_y` / `_z` (and isn't an embedding axis) | **spatial** — added to `feature_columns` and `spatial_columns` |
+| Numeric, name contains `depth` | **spatial (depth)** — added to `feature_columns`, `spatial_post_columns`, AND `depth_columns` |
+| Numeric, name contains `pt_position` (CAVE convention for raw segmentation point) | **spatial (pre)** — added to `feature_columns` and `spatial_pre_columns` (Neuroglancer-space). The only automatic pre-transform signal; other pre-transform columns need to be tagged via the interactive review (Step 3). |
+| Numeric, name matches `_dist` / `radial_` / has generic `_x/_y/_z` suffix | **spatial (post)** — added to `feature_columns` and `spatial_post_columns` (biological-space; default for ambiguous spatial-looking columns). Note: `_um` alone isn't a signal — it's a unit suffix that catches non-spatial volume / area columns. |
 | Numeric, name contains `_dist` or `radial_` | **spatial** — same as above |
 | Pair `<prefix>_x` / `<prefix>_y` where the prefix contains `umap`/`tsne`/`pca`/`phate`/`mds`/`isomap`/`lle` | one `embeddings:` entry with that axis pair (consumed before the spatial check, so embedding axes don't double-classify) |
 | Named matching `source[_-]?root` / `source[_-]?mat[_-]?version` | `audit.source_root_column` / `audit.source_mat_version_column` |
 | Other numeric | plain `feature` — added to `feature_columns` only |
 | Object / string / categorical / bool | `categorical_columns` |
 
-**On the spatial vs feature vs depth model.** `spatial_columns` is a tag overlay on `feature_columns` (a spatial column is still a feature — kNN-eligible, range-filterable). `depth_columns` is in turn a subset of `spatial_columns` — the *rendering special case* the backend already consumes (axis flip + cortical layer markers). The label `spatial (depth)` in the review table means "this column is in all three lists." Plain `spatial` (no depth) means "in `feature_columns` and `spatial_columns`, but the renderer treats it as a normal axis." Plain `feature` means "in `feature_columns` only."
+**On the spatial vs feature vs depth model.** `spatial_pre_columns` and `spatial_post_columns` are both tag overlays on `feature_columns` (a spatial column is still a feature — kNN-eligible, range-filterable). Pre-transform = the volume's native frame (used for Neuroglancer linking); post-transform = biological-space (used for analysis). `depth_columns` is a strict subset of `spatial_post_columns` — the *rendering special case* the backend already consumes (axis flip + cortical layer markers). Depth is necessarily post-transform — the cortical axis is what the aligned-volume transform produces. The label `spatial (depth)` in the review table means "this column is in `feature_columns`, `spatial_post_columns`, AND `depth_columns`." Plain `spatial (post)` (no depth) means "in `feature_columns` and `spatial_post_columns`, but the renderer treats it as a normal axis." Plain `spatial (pre)` means "in `feature_columns` and `spatial_pre_columns` — useful for Neuroglancer cross-nav, not for biological analysis." Plain `feature` means "in `feature_columns` only."

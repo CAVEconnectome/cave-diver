@@ -40,7 +40,7 @@ import re
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import yaml
@@ -70,29 +70,65 @@ _ID_CANDIDATES = ("cell_id", "id")
 # Loose pattern for "looks like a foreign key", e.g. `soma_id`, `nucleus_id`.
 _ID_LIKE_RE = re.compile(r"_id$", re.IGNORECASE)
 
-# Spatial-feature heuristics. A numeric column matching any of these is
-# tagged `spatial` (and still counted as a `feature`). Depth columns
-# additionally pick up the `depth` sub-tag.
+# Spatial-feature heuristics. A numeric column matching any of these
+# is tagged spatial (and still counted as a `feature`). Spatial columns
+# are further split by transform-state:
 #
-# - Depth: any column with `depth` in its name. Always also spatial.
-# - Position coordinates: column name ends in `_x`/`_y`/`_z` (e.g.
-#   `soma_x`, `pt_position_z`). Embedding axes are filtered out before
-#   classification so `umap_x` doesn't accidentally land here.
-# - Distance metrics: contains `_dist` (e.g. `radial_dist_root_soma`,
-#   `soma_to_nucleus_center_dist_um`).
-# - Radial offsets: contains `radial` (preceded by start or underscore).
+# - `spatial_pre`: BEFORE the aligned-volume's spatial transform. Used
+#   for Neuroglancer linking (the volume's native frame). CAVE
+#   convention: `pt_position_*`, `pt_*`, or columns with `_nm`
+#   (nanometers, the raw volume unit).
+# - `spatial_post`: AFTER the transform. Biologically meaningful coords
+#   (cortical depth, layer-aware distances). Includes anything with
+#   `depth`, `_um` (microns, the post-transform unit), or generic
+#   `_x/y/z` suffixes that aren't pre-transform-marked (a reasonable
+#   default for already-transformed derived parquets).
+# - `depth`: strict subset of `spatial_post` — depth is what the
+#   transform produces along the cortical axis.
 _SPATIAL_DEPTH_RE = re.compile(r"depth", re.IGNORECASE)
 _SPATIAL_POS_RE = re.compile(r"[_-][xyz]$", re.IGNORECASE)
 _SPATIAL_DIST_RE = re.compile(r"_dist(?:_|\b|$)", re.IGNORECASE)
 _SPATIAL_RADIAL_RE = re.compile(r"(?:^|_)radial(?:_|$)", re.IGNORECASE)
+# Pre-transform marker: `pt_position` (CAVE convention for the raw
+# segmentation point in the volume's native frame — always pre-
+# transform). Other heuristics (`pt_` alone, `_nm` suffix,
+# `_position_` standalone) are too loose to use as automatic
+# signals; the operator can reassign columns to spatial_pre via the
+# interactive review when they know the column is pre-transform.
+_PRE_MARKERS = (re.compile(r"pt_position", re.IGNORECASE),)
+# Post-transform markers: `depth` is the only unambiguous one. The
+# `_um` (microns) suffix doesn't work here — it catches volume / area /
+# density columns that share the same unit but aren't spatial
+# coordinates (nucleus_volume_um, soma_area_um). Spatial-but-not-depth
+# post-transform columns fall through to the generic `_x/_y/_z` /
+# `_dist` / `radial_` heuristics in _spatial_kind.
+_POST_MARKERS = (_SPATIAL_DEPTH_RE,)
 
 
-def _is_spatial_name(name: str) -> bool:
-    """True when the column name matches any spatial-feature pattern."""
-    return any(
-        p.search(name)
-        for p in (_SPATIAL_DEPTH_RE, _SPATIAL_POS_RE, _SPATIAL_DIST_RE, _SPATIAL_RADIAL_RE)
-    )
+def _spatial_kind(name: str) -> Literal["pre", "post", None]:
+    """Classify a numeric column's spatial kind by name, or None if it
+    isn't spatial. Used by the auto-classifier and the interactive
+    review. Pre/post markers override each other in order:
+      1. Pre marker → pre.
+      2. Post marker → post.
+      3. Otherwise: if any generic spatial pattern matches (_x/_y/_z
+         suffix, _dist, radial), default to `post` (a reasonable
+         default for derived feature parquets, which are typically
+         already transformed). The operator can reassign interactively.
+    """
+    for p in _PRE_MARKERS:
+        if p.search(name):
+            return "pre"
+    for p in _POST_MARKERS:
+        if p.search(name):
+            return "post"
+    if (
+        _SPATIAL_POS_RE.search(name)
+        or _SPATIAL_DIST_RE.search(name)
+        or _SPATIAL_RADIAL_RE.search(name)
+    ):
+        return "post"
+    return None
 
 
 # ────────── Classification helpers (pure) ──────────
@@ -204,8 +240,9 @@ def _detect_embeddings(df: pd.DataFrame) -> tuple[list[dict[str, Any]], set[str]
 _BUCKETS = (
     "id_column",
     "feature",          # plain numeric feature (kNN, range filter, no spatial semantics)
-    "spatial",          # numeric with a spatial interpretation; always co-tagged `feature`
-    "depth",            # special case of spatial; co-tagged `feature` + `spatial`
+    "spatial_pre",      # pre-transform spatial (Neuroglancer-space); always co-tagged `feature`
+    "spatial_post",     # post-transform spatial (biological-space); always co-tagged `feature`
+    "depth",            # strict subset of spatial_post; co-tagged `feature` + `spatial_post`
     "categorical",
     "audit_root",
     "audit_mat_version",
@@ -244,12 +281,16 @@ def _classify_one(
         return tags
     if _is_numeric(dtype):
         tags.add("feature")
-        if _is_spatial_name(col):
-            tags.add("spatial")
-        if _SPATIAL_DEPTH_RE.search(col):
-            # Depth implies spatial (it's the rendering special case).
-            tags.add("spatial")
-            tags.add("depth")
+        kind = _spatial_kind(col)
+        if kind == "pre":
+            tags.add("spatial_pre")
+        elif kind == "post":
+            tags.add("spatial_post")
+            if _SPATIAL_DEPTH_RE.search(col):
+                # Depth is a strict subset of spatial_post — adds the
+                # depth sub-tag that the renderer special-cases for
+                # axis flip + cortical layer markers.
+                tags.add("depth")
         return tags
     if _is_categorical_dtype_compat(dtype):
         tags.add("categorical")
@@ -280,7 +321,8 @@ def _build_feature_table_dict(
     `feature_tables: [...]` wrapper, no manifest-level `knn:` block."""
     feature_columns = [c for c, tags in classification.items() if "feature" in tags]
     categorical_columns = [c for c, tags in classification.items() if "categorical" in tags]
-    spatial_columns = [c for c, tags in classification.items() if "spatial" in tags]
+    spatial_pre_columns = [c for c, tags in classification.items() if "spatial_pre" in tags]
+    spatial_post_columns = [c for c, tags in classification.items() if "spatial_post" in tags]
     depth_columns = [c for c, tags in classification.items() if "depth" in tags]
 
     ft: dict[str, Any] = {"schema_version": 1, "id": feature_table_id, "title": title}
@@ -292,8 +334,10 @@ def _build_feature_table_dict(
         ft["cell_id_source_table"] = cell_id_source_table
     ft["feature_columns"] = feature_columns
     ft["categorical_columns"] = categorical_columns
-    if spatial_columns:
-        ft["spatial_columns"] = spatial_columns
+    if spatial_pre_columns:
+        ft["spatial_pre_columns"] = spatial_pre_columns
+    if spatial_post_columns:
+        ft["spatial_post_columns"] = spatial_post_columns
     if depth_columns:
         ft["depth_columns"] = depth_columns
     if audit:
@@ -361,8 +405,10 @@ def _bucket_label(tags: set[str]) -> str:
     if "feature" in tags:
         if "depth" in tags:
             return "[green]spatial (depth)[/]"
-        if "spatial" in tags:
-            return "[green]spatial[/]"
+        if "spatial_post" in tags:
+            return "[green]spatial (post)[/]"
+        if "spatial_pre" in tags:
+            return "[cyan]spatial (pre)[/]"
         return "feature"
     if "categorical" in tags:
         return "categorical"
@@ -547,7 +593,8 @@ def _interactive_classification_review(
             "  reassign to",
             choices=[
                 "feature",
-                "spatial",
+                "spatial_pre",
+                "spatial_post",
                 "depth",
                 "categorical",
                 "audit_root",
@@ -560,11 +607,15 @@ def _interactive_classification_review(
         )
         if new_bucket == "skip":
             continue
-        # `spatial` and `depth` co-tag with `feature` (and depth implies spatial).
+        # spatial_pre / spatial_post / depth co-tag with `feature`.
+        # `depth` implies `spatial_post` (depth is the post-transform
+        # cortical axis).
         if new_bucket == "depth":
-            classification[col] = {"feature", "spatial", "depth"}
-        elif new_bucket == "spatial":
-            classification[col] = {"feature", "spatial"}
+            classification[col] = {"feature", "spatial_post", "depth"}
+        elif new_bucket == "spatial_post":
+            classification[col] = {"feature", "spatial_post"}
+        elif new_bucket == "spatial_pre":
+            classification[col] = {"feature", "spatial_pre"}
         else:
             classification[col] = {new_bucket}
     console.print()

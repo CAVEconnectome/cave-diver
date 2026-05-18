@@ -168,5 +168,6 @@ def _validate_frame(df: pd.DataFrame, ft: FeatureTableSpec) -> None:
 
     _warn_missing("feature_columns", ft.feature_columns)
     _warn_missing("categorical_columns", ft.categorical_columns)
-    _warn_missing("spatial_columns", ft.spatial_columns)
+    _warn_missing("spatial_pre_columns", ft.spatial_pre_columns)
+    _warn_missing("spatial_post_columns", ft.spatial_post_columns)
     _warn_missing("depth_columns", ft.depth_columns)

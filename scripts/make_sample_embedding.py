@@ -143,7 +143,7 @@ def _build_feature_table(parquet_path: Path) -> dict:
             "soma_area_um",
         ],
         "categorical_columns": ["predicted_class", "predicted_subclass"],
-        "spatial_columns": ["soma_depth_y"],
+        "spatial_post_columns": ["soma_depth_y"],
         "depth_columns": ["soma_depth_y"],
         "audit": {
             "source_root_column": "source_root_id",

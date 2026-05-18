@@ -1760,7 +1760,8 @@ def _feature_table_summary(ft: FeatureTableSpec) -> dict[str, Any]:
         "cell_id_source_table": ft.cell_id_source_table,
         "feature_columns": ft.feature_columns,
         "categorical_columns": ft.categorical_columns,
-        "spatial_columns": list(ft.spatial_columns),
+        "spatial_pre_columns": list(ft.spatial_pre_columns),
+        "spatial_post_columns": list(ft.spatial_post_columns),
         "depth_columns": ft.depth_columns,
         "has_audit": ft.audit is not None,
         "categories": [

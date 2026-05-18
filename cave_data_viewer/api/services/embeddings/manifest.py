@@ -19,7 +19,8 @@ its own file, moving ``knn`` fields onto each table, and moving any
 Schema v1 (current): each FeatureTableSpec is self-contained. It owns:
 - the data pointer (``source``, ``id_column``, ``cell_id_source_table``)
 - the column layout (``feature_columns``, ``categorical_columns``,
-  ``spatial_columns``, ``depth_columns``, optional ``audit``, ``categories``)
+  ``spatial_pre_columns``, ``spatial_post_columns``, ``depth_columns``,
+  optional ``audit``, ``categories``)
 - the embedding views (``embeddings``)
 - the similarity controls (``scaling``, ``clip_percentiles``,
   ``standardize``) — moved from the old manifest-level ``knn`` block so
@@ -182,25 +183,38 @@ class FeatureTableSpec(BaseModel):
     numerics). ``categorical_columns`` are usable for color and equality
     filters but are excluded from kNN by default.
 
-    ``spatial_columns`` declares which numeric columns have a spatial
-    interpretation — coordinates, depths, distances, radial offsets.
-    Overlaps with ``feature_columns`` the way ``depth_columns`` does
-    (a spatial column is still a feature and participates in kNN /
-    range filtering). Reserved for UI groupings and future
-    spatial-aware visualizations — the rendering pipeline doesn't
-    consume the field yet, but the scaffold script populates it via
-    name heuristics (``*_x`` / ``*_y`` / ``*_z`` suffixes, ``radial_*``
-    / ``*_dist*`` patterns, anything that ends up in ``depth_columns``).
+    ``spatial_pre_columns`` and ``spatial_post_columns`` together
+    declare which numeric columns have a spatial interpretation —
+    coordinates, depths, distances, radial offsets — split by whether
+    they live BEFORE the aligned-volume's spatial transform (raw
+    coords in the original volume frame) or AFTER it (biological-
+    space coords). Both overlap with ``feature_columns`` the way
+    ``depth_columns`` does — a spatial column is still a feature and
+    participates in kNN / range filtering.
 
-    ``depth_columns`` declares which numeric columns are
-    depth-shaped — a *special case* of spatial that the rendering
-    pipeline does consume: when a depth column is bound to a plot's
-    axis, the renderer auto-flips the axis and overlays layer-boundary
-    markers (the same machinery the connectivity-side plots use, via
-    ``services/plots.py::_is_depth_column``). Every column in
-    ``depth_columns`` SHOULD also appear in ``spatial_columns`` — the
-    loader doesn't enforce this today, but consumers may rely on the
-    invariant later.
+    Why both matter:
+    - **Pre-transform** is what Neuroglancer needs in URLs: the
+      volume's native frame is where image data + segmentation live.
+      The cell_id source table also carries pre-transform coords for
+      every row by convention; bundling them in the feature parquet
+      is a static cache of that lookup so the explorer doesn't pay
+      the join cost at query time.
+    - **Post-transform** is what's biologically meaningful: cortical
+      depth, layer-aware distances, anything that respects the
+      anatomy the transform encodes.
+    - They're not interchangeable — a feature table that wants to
+      support both Neuroglancer cross-nav AND biological analysis
+      bundles columns in both lists.
+
+    ``depth_columns`` is a *strict subset* of
+    ``spatial_post_columns``: depth is what the aligned-volume
+    transform produces along the cortical axis, so a depth column is
+    necessarily post-transform. The renderer special-cases depth —
+    when a depth column is bound to a plot's axis, the axis
+    auto-flips and cortical layer boundary markers overlay (the same
+    machinery the connectivity-side plots use via
+    ``services/plots.py::_is_depth_column``). The loader doesn't
+    enforce the subset invariant today but consumers may rely on it.
 
     ``cell_id_source_table`` names the CAVE table whose row ids the
     ``id_column`` references. The composite
@@ -239,7 +253,8 @@ class FeatureTableSpec(BaseModel):
 
     feature_columns: list[str] | None = None
     categorical_columns: list[str] = Field(default_factory=list)
-    spatial_columns: list[str] = Field(default_factory=list)
+    spatial_pre_columns: list[str] = Field(default_factory=list)
+    spatial_post_columns: list[str] = Field(default_factory=list)
     depth_columns: list[str] = Field(default_factory=list)
     audit: FeatureTableAudit | None = None
     categories: list[FeatureCategorySpec] = Field(default_factory=list)
