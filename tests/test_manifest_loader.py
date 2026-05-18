@@ -97,3 +97,57 @@ def test_get_manifest_cache_key_is_datastack_only(monkeypatch, tmp_path):
         assert ("ds_a",) in keys, (
             f"expected ('ds_a',) in cache keys, got {keys}"
         )
+
+
+def test_source_uri_defaults_to_colocated_parquet(monkeypatch, tmp_path):
+    """A per-FT YAML without an explicit source.uri gets it filled
+    in to <same-prefix>/<id>.parquet at load time."""
+    from cave_data_viewer.api import create_app
+    from cave_data_viewer.api.services.embeddings.manifest import (
+        fetch_and_parse_manifest,
+    )
+
+    ft_dir = tmp_path / "feature_tables" / "ds_a"
+    ft_dir.mkdir(parents=True)
+    # No source.uri — should default-fill.
+    (ft_dir / "morpho.yaml").write_text(
+        "schema_version: 1\n"
+        "id: morpho\n"
+        "title: Morpho\n"
+        "source: {kind: parquet}\n"   # uri omitted
+        "id_column: cell_id\n"
+        "cell_id_source_table: nucleus_detection_v0\n"
+    )
+
+    app = create_app()
+    with app.app_context():
+        manifest = fetch_and_parse_manifest(f"file://{ft_dir}/")
+        assert len(manifest.feature_tables) == 1
+        ft = manifest.feature_tables[0]
+        assert ft.source.uri == f"file://{ft_dir}/morpho.parquet"
+
+
+def test_explicit_source_uri_wins_over_default(monkeypatch, tmp_path):
+    """When source.uri is set in the YAML, it is preserved — the
+    default does NOT clobber it. This is the multi-datastack
+    shared-parquet escape hatch."""
+    from cave_data_viewer.api import create_app
+    from cave_data_viewer.api.services.embeddings.manifest import (
+        fetch_and_parse_manifest,
+    )
+
+    ft_dir = tmp_path / "feature_tables" / "ds_a"
+    ft_dir.mkdir(parents=True)
+    (ft_dir / "morpho.yaml").write_text(
+        "schema_version: 1\n"
+        "id: morpho\n"
+        "title: Morpho\n"
+        "source: {kind: parquet, uri: gs://shared-bucket/morpho.parquet}\n"
+        "id_column: cell_id\n"
+        "cell_id_source_table: nucleus_detection_v0\n"
+    )
+
+    app = create_app()
+    with app.app_context():
+        manifest = fetch_and_parse_manifest(f"file://{ft_dir}/")
+        assert manifest.feature_tables[0].source.uri == "gs://shared-bucket/morpho.parquet"

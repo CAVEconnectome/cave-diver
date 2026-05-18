@@ -90,13 +90,19 @@ _FT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,63}$")
 class FeatureTableSourceRef(BaseModel):
     """How the backend finds a feature table's underlying data.
 
-    v1 only ships ``kind: parquet``. A future catalog service would add
-    ``kind: catalog`` (or similar) without changing this file's downstream
-    consumers — the loader dispatches on ``kind``.
+    v1 only ships ``kind: parquet``. A future catalog service would
+    add ``kind: catalog`` (or similar) without changing this file's
+    downstream consumers — the loader dispatches on ``kind``.
+
+    ``uri`` is optional in the YAML: when omitted, the loader fills
+    it in with ``<yaml-prefix>/<id>.parquet`` so a co-located
+    parquet doesn't need to be named. When set explicitly, that
+    wins — this is the escape hatch for parquets in a shared bucket
+    or a different storage class than the YAML.
     """
 
     kind: Literal["parquet"]
-    uri: str
+    uri: str | None = None
 
 
 class FeatureTableAudit(BaseModel):
@@ -498,9 +504,28 @@ def _fetch_and_validate_ft(
         seen_emb_ids.add(emb.id)
         valid_embeddings.append(emb)
 
-    return parent.model_copy(
+    ft = parent.model_copy(
         update={"embeddings": valid_embeddings, "categories": valid_categories}
     )
+
+    # Default-fill source.uri from the YAML's prefix when absent.
+    # The convention is <yaml-prefix>/<id>.parquet, where the prefix
+    # is the URI up to and including the trailing slash before the
+    # filename. file:// and gs:// alike are handled because we
+    # operate on the URI string, not the filesystem.
+    if ft.source.uri is None:
+        last_slash = uri.rfind("/")
+        yaml_prefix = uri[: last_slash + 1] if last_slash >= 0 else ""
+        default_uri = f"{yaml_prefix}{ft.id}.parquet"
+        ft = ft.model_copy(
+            update={
+                "source": FeatureTableSourceRef(
+                    kind=ft.source.kind, uri=default_uri,
+                )
+            }
+        )
+
+    return ft
 
 
 def _basename_of(uri: str) -> str:
