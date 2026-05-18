@@ -82,6 +82,7 @@ landing page is empty and the cell-id input is hidden.
 | `root_id_lookup_main_table` | `string?` | `null` | optional | Primary annotation table for the reverse direction (root_id → cell_id). |
 | `root_id_lookup_alt_tables` | `[string]` | `[]` | optional | Additional annotation tables walked after the main table for the reverse lookup, typically for cells whose primary annotation has been split or merged out. |
 | `decoration_warmup` | `DecorationWarmup?` | `null` (off) | optional | Periodic background refresh of decoration tables. K8s/HPA users probably want this on; dev users almost never. |
+| `feature_explorer` | `FeatureExplorerConfig?` | `null` | optional | Enables /explore for this datastack. Block contains `enabled: bool` + optional `cell_id_source_table: string?`. The embedding catalog directory is computed from `CDV_FEATURE_TABLES_BASE_URI` + the datastack name — no per-datastack manifest URI to configure. |
 | `examples` | `[Example]` | `[]` | optional | Fully-specified workspace states for the landing page. Click *Open* to land on the configured workspace. |
 | `recipes` | `[Recipe]` | `[]` | optional | Configuration overlays for the landing page. Click *Apply* to merge the recipe into the user's current cell. |
 

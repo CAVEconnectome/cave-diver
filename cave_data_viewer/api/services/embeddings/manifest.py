@@ -1,10 +1,10 @@
 """Feature-table catalog: schema, fetch, parse, validate, SWR cache.
 
-The catalog is a **directory of per-file feature-table YAMLs** referenced by
-the datastack YAML's ``feature_explorer.manifest_uri``. Each file is one
-``FeatureTableSpec`` at the top level; the filename basename MUST equal the
-file's ``id`` field. Adding a new feature table = drop a new ``.yaml`` into
-the directory.
+The catalog is a **directory of per-file feature-table YAMLs** located at the
+convention path ``<CDV_FEATURE_TABLES_BASE_URI>/feature_tables/<datastack>/``.
+Each file is one ``FeatureTableSpec`` at the top level; the filename basename
+MUST equal the file's ``id`` field. Adding a new feature table = drop a new
+``.yaml`` (and companion ``.parquet``) into the convention directory.
 
 A single-file URI (path ending in ``.yaml``) is also accepted as a
 convenience for one-table dev setups — the file's contents are parsed as
@@ -28,10 +28,11 @@ Schema v1 (current): each FeatureTableSpec is self-contained. It owns:
 
 Caching strategy:
 
-- Cache key is ``(datastack, manifest_uri)``. Two datastacks pointing at the
-  same directory get independent cache entries — useful for the
-  ``cache_alias`` flow where two datastacks share underlying data but route
-  cache reads separately.
+- Cache key is ``(datastack,)``. The convention URI is a deterministic
+  function of the datastack name + ``CDV_FEATURE_TABLES_BASE_URI``, so it
+  doesn't need to be part of the key. Two datastacks always get independent
+  cache entries — useful for the ``cache_alias`` flow where two datastacks
+  share underlying data but route cache reads separately.
 - SWR semantics via ``services.swr.SwrCache``. Soft TTL ~5 min: stale
   entries are served immediately while a background thread refetches.
   Hard TTL ~1 h bounds how long we'll serve stale data if refresh keeps
@@ -509,7 +510,7 @@ def get_manifest(
     Cache hit, fresh: return immediately. Cache hit, stale: return
     immediately and schedule a background refresh. Cache miss:
     synchronous fetch; first-fetch errors propagate so a
-    misconfigured manifest_uri is obvious from the very first request.
+    a misconfigured convention directory is obvious from the very first request.
 
     When no cache is registered on the app (e.g. unit-test context
     with no full app-context setup), falls through to a direct fetch

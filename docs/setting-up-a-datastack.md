@@ -7,8 +7,8 @@ This guide walks you through everything needed to add a new CAVE datastack to th
 │  config/aligned_volumes/<av>.yaml      spatial + synapse defaults   │
 │      ↑ inherited by ↓                                               │
 │  config/datastacks/<ds>.yaml          datastack-level config (1)   │
-│      │   feature_explorer.manifest_uri →                            │
-│      │       gs://…/manifest.yaml     embedding catalog (2)         │
+│      │   (CDV_FEATURE_TABLES_BASE_URI)/feature_tables/<ds>/         │
+│      │       <id>.yaml + <id>.parquet  embedding catalog (2)        │
 │      └── (no inline tours; per-file YAMLs below)                    │
 │  config/recipes/<ds>/<id>.yaml         operator recipes (3)         │
 │  config/examples/<ds>/<id>.yaml        operator examples (4)        │
@@ -122,13 +122,12 @@ synapse_warmup:
   parallel_workers: 8
 ```
 
-**Feature explorer.** Enables `/explore` for this datastack; the embedding catalog itself lives in the manifest file at `manifest_uri`. See **Section 2** for the manifest schema.
+**Feature explorer.** Enables `/explore` for this datastack. The embedding catalog directory is derived from `CDV_FEATURE_TABLES_BASE_URI` + the datastack name — no per-datastack manifest URI. See **Section 2** for the per-FT YAML schema and deployment layout.
 
 ```yaml
 feature_explorer:
   enabled: true
-  cell_id_source_table: nucleus_detection_v0
-  manifest_uri: "gs://my-bucket/my-prefix/feature-manifest.yaml"
+  cell_id_source_table: nucleus_detection_v0   # optional fallback
 ```
 
 ### LTS marker (for examples to surface)
@@ -151,176 +150,74 @@ Without this file, every example for the datastack is hidden behind the "no LTS 
 
 ## 2. Feature explorer configuration
 
-**Directory:** `feature_explorer.manifest_uri` points at a **directory** of per-file feature-table YAMLs (`gs://...prefix/`, `file:///path/to/dir/`). One file per feature table. Adding a new feature table = drop another `.yaml` into the directory.
-**Single-file shorthand:** if `manifest_uri` ends in `.yaml`, the file is parsed as one feature table (useful for tiny dev setups).
-**Schema:** `cave_data_viewer/api/services/embeddings/manifest.py::FeatureTableSpec`
+**Directory (convention):** `<CDV_FEATURE_TABLES_BASE_URI>/feature_tables/<datastack>/`. One subdir per datastack. No per-datastack `manifest_uri` — the path is derived from the env var and the datastack name.
 
-The catalog lives outside the wheel so adding new feature data is an upload (or a `gsutil cp`), not a backend redeploy. The catalog is fetched with stale-while-revalidate semantics (soft TTL ~5 min), so directory edits propagate to running pods without a restart.
+**Per-file:** one `<id>.yaml` per feature table. Filename basename must equal the file's `id` field. Adding a new feature table = drop a (parquet, yaml) pair into the right subdir. No service redeploy.
 
-**Filename convention.** Each file's name must be `<feature-table-id>.yaml` — the basename of the file MUST match the file's `id:` field. The loader skips (with a warning) any file whose `id` and filename disagree.
+**Schema:** `cave_data_viewer/api/services/embeddings/manifest.py::FeatureTableSpec`.
 
-### Per-file schema (one feature table)
+### Datastack YAML side
 
-```yaml
-schema_version: 1              # required; v1 is current
-
-id: morpho_v1                  # MUST match filename basename
-title: "Morphology features (v1)"
-description: "Soma + nucleus geometry from the 2024-10 pipeline."
-
-# The parquet (only kind supported in v1).
-source:
-  kind: parquet
-  uri: gs://my-bucket/embeddings/morpho_v1.parquet
-
-# The cell_id column in the parquet.
-id_column: cell_id
-
-# The CAVE table whose row ids the `id_column` references. Combined
-# with `id_column` it forms the stable identity `(cell_id_source_table,
-# id_column)` — necessary because not every object gets a universal id;
-# the source table is part of the key. Optional here: when null, the
-# datastack-level `feature_explorer.cell_id_source_table` is used as a
-# fallback. Required overall (at least one of the two must be set).
-cell_id_source_table: nucleus_detection_v0
-
-# Numeric columns eligible for kNN + range filtering. If null, the
-# loader infers all non-axis non-audit numerics.
-feature_columns:
-  - soma_depth_y
-  - nucleus_volume_um
-  - soma_area_um
-
-# String / categorical columns. Usable for color and equality filters;
-# excluded from kNN.
-categorical_columns:
-  - predicted_class
-  - predicted_subclass
-
-# Numeric columns with spatial meaning, split by whether they live
-# BEFORE or AFTER the aligned-volume's spatial transform. Both overlap
-# with `feature_columns` — spatial columns are still features.
-#
-# Pre-transform: the volume's native frame. Used for Neuroglancer URLs
-# (image data + segmentation live in this frame). Bundling them in
-# the feature parquet caches the cell_id-source-table → position
-# lookup so the explorer doesn't pay the join cost at query time.
-spatial_pre_columns:
-  - pt_position_x
-  - pt_position_y
-  - pt_position_z
-
-# Post-transform: biologically meaningful coords (cortical depth,
-# layer-aware distances) — anything the aligned-volume's spatial
-# transform produced. This is what analyses operate on.
-spatial_post_columns:
-  - soma_depth_y
-  - soma_to_nucleus_center_dist_um
-
-# A *strict subset* of spatial_post_columns. The renderer special-cases
-# depth: when a depth column is bound to a plot axis, the axis
-# auto-flips and cortical layer boundary markers overlay. Depth is
-# necessarily post-transform — the cortical axis is what the transform
-# produces.
-depth_columns:
-  - soma_depth_y
-
-# Optional. Names of audit columns in the parquet — surfaced in
-# cell-detail tooltips so a user can see which root_id the features
-# were computed against.
-audit:
-  source_root_column: source_root_id
-  source_mat_version_column: source_mat_version
-
-# Optional. UI-only column groupings for the channel picker. A column
-# may appear in multiple categories; columns not listed anywhere
-# render under an implicit "Uncategorized" group.
-categories:
-  - id: morphology
-    title: Morphology
-    description: "Soma and nucleus geometry"
-    columns: [soma_depth_y, nucleus_volume_um, soma_area_um]
-  - id: classifier
-    title: Classifier
-    columns: [predicted_class, predicted_subclass]
-
-# Similarity-pipeline controls (per-table since v1). Different feature
-# sets can use different standardization — a robust-scaled dataset
-# stays robust, a pre-standardized one sets `scaling: raw`.
-scaling: zscore                 # zscore | robust | percentile | raw
-clip_percentiles: [0.1, 99.9]   # winsorize bounds (null = disabled)
-# standardize: true             # legacy boolean; default true
-
-# 2D scatter views onto this feature table. Multiple per table is the
-# point — one feature dataframe can carry a whole-pop UMAP + an
-# inhibitory-only UMAP + a t-SNE, all sharing rows and features.
-embeddings:
-  - id: umap
-    title: UMAP
-    axes: [umap_x, umap_y]       # must be exactly 2
-    default_color_by: predicted_subclass
-    # depth_axis names which axis is depth-shaped (if any). Usually
-    # null for UMAP/t-SNE axes; set when binding a real depth column.
-    # depth_axis: y
-```
-
-### Directory layout
-
-```
-gs://my-bucket/embeddings/
-└── feature_tables/                       ← manifest_uri points here
-    ├── morpho_v1.yaml
-    ├── morpho_v2.yaml
-    └── synaptic_v1.yaml
-```
-
-The datastack YAML side:
+The datastack YAML declares only `enabled` and an optional fallback `cell_id_source_table`:
 
 ```yaml
 feature_explorer:
   enabled: true
-  # Fallback used only when a feature_table.yaml in the directory below
-  # doesn't declare its own cell_id_source_table. Optional when every
-  # feature_table.yaml sets its own.
-  cell_id_source_table: nucleus_detection_v0
-  manifest_uri: gs://my-bucket/embeddings/feature_tables/
+  cell_id_source_table: nucleus_detection_v0   # optional fallback
 ```
 
-### Multi-dataset feature tables
+When `enabled: false` or the block is omitted, the SPA hides `/explore` for this datastack.
 
-A feature table can declare which datastacks it participates in via a per-file `datastacks:` block. Used in joint manifests where one parquet spans multiple datastacks with potentially different source-table conventions:
+### Per-FT YAML
+
+Minimal — `source.uri` is optional and defaults to the co-located `<id>.parquet`:
 
 ```yaml
 schema_version: 1
-id: shared_morpho
-title: "Morphology shared across MICrONS public + phase3"
-source: { kind: parquet, uri: gs://.../shared_morpho.parquet }
+id: morpho_v1
+title: "Morphology features (v1)"
+source:
+  kind: parquet
+  # uri omitted: defaults to <yaml-prefix>/morpho_v1.parquet
 id_column: cell_id
-datastacks:
-  - name: minnie65_public
-  - name: minnie65_phase3_v1
-    cell_id_source_table: nucleus_detection_v0  # override only when differs
-# ... rest of the feature_table fields ...
+cell_id_source_table: nucleus_detection_v0
+feature_columns: [soma_depth_y, nucleus_volume_um, soma_area_um]
+categorical_columns: [predicted_class, predicted_subclass]
+depth_columns: [soma_depth_y]
+spatial_post_columns: [soma_depth_y]
+embeddings:
+  - id: umap
+    title: UMAP
+    axes: [umap_x, umap_y]
+    default_color_by: predicted_subclass
+scaling: zscore
+clip_percentiles: [0.1, 99.9]
 ```
 
-When `datastacks:` is omitted (typical case), the feature table belongs to whichever datastack pointed at the directory via `manifest_uri`.
+When `source.uri` IS set explicitly (e.g. a parquet shared by two datastacks; a parquet in a different bucket; an http:// reference), the explicit value wins.
+
+### Where files live in deployment
+
+| Deployment | `CDV_FEATURE_TABLES_BASE_URI` | Files at |
+|---|---|---|
+| Local source install | unset | `<repo>/config/feature_tables/<ds>/` |
+| Local Docker (bundled) | unset | `/app/config/feature_tables/<ds>/` (baked into image) |
+| Local Docker (bind-mounted) | `file:///etc/cdv/` | `/etc/cdv/feature_tables/<ds>/` (bind-mount) |
+| K8s production | `gs://cdv-cache/` | `gs://cdv-cache/feature_tables/<ds>/` |
+
+Manifests are cached with SWR semantics (soft TTL ~5 min) so edits to the GCS prefix propagate to running pods without a restart.
+
+### Filename convention
+
+Each file's name must be `<feature-table-id>.yaml` — the basename matches the file's `id` field. The loader skips (with a warning) any file whose `id` and filename disagree. The scaffolders enforce this by computing the output path from the `id`.
 
 ### Subset embeddings
 
-Rows with null axes are dropped from the scatter automatically. This is the mechanism for subset views: an "inhibitory-only UMAP" simply has null `umap_x` / `umap_y` for non-inhibitory rows in the same parquet.
+Rows with null axes are dropped from the scatter automatically. An "inhibitory-only UMAP" simply has null `umap_x` / `umap_y` for non-inhibitory rows in the same parquet.
 
-### Scaling + clip behavior
+### Multi-datastack sharing
 
-`knn.scaling` selects the standardization pipeline applied before similarity computations:
-
-| Mode | Use when |
-|------|----------|
-| `zscore` | Default; matches the conventional PCA pipeline. |
-| `robust` | Features are heavy-tailed and you want median/IQR scaling. |
-| `percentile` | Non-parametric, bounded — already insensitive to outliers (skips clip). |
-| `raw` | The matrix is pre-standardized externally; skip in-app scaling. |
-
-`knn.clip_percentiles` is a per-feature winsorize bound applied before computing standardization stats and before PCA's SVD. Stats-only: outlier cells stay in the matrix at their actual standardized values, so they remain findable in similarity space — they just no longer distort the standardization or PCA components everyone else sees. Set to `null` if your input parquet is known to be clean.
+Each per-FT YAML belongs to one datastack — the one whose subdir it lives in. Sharing the same feature table across two datastacks = uploading the pair into both subdirs (or, when the parquet itself is large and you want to avoid duplicating data, uploading two small YAMLs whose `source.uri:` both point at one shared parquet URL).
 
 ---
 
@@ -584,15 +481,17 @@ The generated file is a heavily commented skeleton; edit, uncomment, and commit.
 Opens a feature-table parquet, introspects its schema, and walks you through an interactive review (built with `rich`) before emitting a starter manifest. The script validates the output against the Pydantic `Manifest` schema before writing, so an authored manifest is parseable by the running backend by construction.
 
 ```bash
-# Interactive (recommended) — only the parquet is required
-uv run python scripts/scaffold_feature_explorer.py \
-    --parquet path/to/features.parquet
-
-# Non-interactive — accept heuristic defaults, no prompts
+# Interactive (recommended) — only the parquet and datastack are required
 uv run python scripts/scaffold_feature_explorer.py \
     --parquet path/to/features.parquet \
+    --datastack minnie65_public
+
+# Non-interactive — accept all heuristic defaults, no prompts
+uv run python scripts/scaffold_feature_explorer.py \
+    --parquet path/to/features.parquet \
+    --datastack minnie65_public \
     --feature-table-id morpho_v1 \
-    --non-interactive --id-column cell_id --out /tmp/manifest.yaml
+    --non-interactive --id-column cell_id
 ```
 
 The interactive flow is six steps:
@@ -608,8 +507,8 @@ After step 6 the script runs Pydantic validation; on success it writes the YAML 
 
 Options:
 - `--parquet <path>` (required) — the feature parquet to inspect.
-- `--feature-table-id <id>` (optional in interactive mode; required with `--non-interactive`) — the manifest's `feature_tables[].id`. When omitted interactively, the script prompts with a slugified parquet basename as the default.
-- `--out <path>` — output manifest path (default: `/tmp/manifest.yaml`).
+- `--datastack <name>` (required) — the datastack name; used to compute the output path under `CDV_FEATURE_TABLES_BASE_URI/feature_tables/<ds>/`.
+- `--feature-table-id <id>` (optional in interactive mode; required with `--non-interactive`) — the per-FT YAML's `id` field. When omitted interactively, the script prompts with a slugified parquet basename as the default.
 - `--parquet-uri <uri>` — the URI to embed in `source.uri`. Defaults to `file://<absolute-path>` for local development; pass `gs://...` for production manifests.
 - `--id-column <name>` — pre-resolve the id column (skips the prompt).
 - `--non-interactive` — accept all heuristic defaults, no prompts. Useful for scripted regeneration. Requires `--feature-table-id` and `--id-column` (or a canonical `cell_id`/`id` column).

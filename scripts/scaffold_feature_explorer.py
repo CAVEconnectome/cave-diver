@@ -22,15 +22,17 @@ Heuristics (run once, then reviewable in the UI):
 Companion to ``docs/setting-up-a-datastack.md``.
 
 Usage:
-    # Interactive (recommended)
+    # Interactive (recommended) — only the parquet and datastack are required
     uv run python scripts/scaffold_feature_explorer.py \\
         --parquet path/to/features.parquet \\
-        --feature-table-id morpho_v1
+        --datastack minnie65_public
 
     # Non-interactive — accept all heuristic defaults, no prompts
     uv run python scripts/scaffold_feature_explorer.py \\
-        --parquet path/to/features.parquet --feature-table-id morpho_v1 \\
-        --non-interactive --out /tmp/manifest.yaml
+        --parquet path/to/features.parquet \\
+        --datastack minnie65_public \\
+        --feature-table-id morpho_v1 \\
+        --non-interactive --id-column cell_id
 """
 
 from __future__ import annotations
@@ -879,20 +881,19 @@ def _print_datastack_snippet(
 ) -> None:
     """Print the YAML block to paste into the datastack YAML.
 
-    Points `manifest_uri` at the *directory* containing this per-file
-    feature_table YAML — that's the v1 catalog shape. Adding more
-    feature tables is then just dropping more `.yaml` files into the
-    same directory.
+    The discovery path is derived from CDV_FEATURE_TABLES_BASE_URI + the
+    datastack name — no per-datastack manifest_uri is needed. Adding more
+    feature tables is then just dropping more (.yaml, .parquet) pairs into
+    the convention directory for that datastack.
     """
-    directory = ft_path.parent.resolve()
     snippet = (
         "feature_explorer:\n"
         "  enabled: true\n"
-        "  # cell_id_source_table here is a fallback used only when a\n"
-        "  # feature_table.yaml in the directory below doesn't declare\n"
-        "  # its own cell_id_source_table.\n"
+        "  # cell_id_source_table is a fallback used only when a per-FT\n"
+        "  # YAML in the convention directory doesn't declare its own.\n"
         "  cell_id_source_table: <CAVE table>     # optional fallback\n"
-        f"  manifest_uri: file://{directory}/\n"
+        "# No manifest_uri — catalog path is:\n"
+        "#   <CDV_FEATURE_TABLES_BASE_URI>/feature_tables/<datastack>/\n"
     )
     console.print()
     console.print(

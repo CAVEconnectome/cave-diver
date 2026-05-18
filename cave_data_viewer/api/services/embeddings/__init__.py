@@ -4,7 +4,7 @@ Discovery flow (one indirection):
 
 ::
 
-    datastack YAML (feature_explorer.manifest_uri)
+    CDV_FEATURE_TABLES_BASE_URI + "/feature_tables/<datastack>/"  (convention path)
           │
           ▼
     directory of per-file FeatureTableSpec YAMLs  ← cached, SWR ~5 min soft / ~1 h hard
