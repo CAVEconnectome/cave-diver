@@ -405,7 +405,7 @@ def _interactive_pick_id_column(
 ) -> str:
     """Prompt for the id column. Returns the chosen column name."""
     console.print()
-    console.rule("[bold]Step 1/6 — Pick id column[/]")
+    console.rule("[bold]Step 2/6 — Pick id column[/]")
     candidates = []
     # Canonical names first.
     for cand in _ID_CANDIDATES:
@@ -459,7 +459,7 @@ def _interactive_classification_review(
     """Walk the user through review/edit of column buckets. Returns the
     (possibly modified) classification."""
     console.print()
-    console.rule("[bold]Step 2/6 — Review column classification[/]")
+    console.rule("[bold]Step 3/6 — Review column classification[/]")
     console.print(_columns_table(df, classification, "All columns"))
     if not Confirm.ask(
         "Edit any column's bucket?",
@@ -510,22 +510,46 @@ def _interactive_classification_review(
     return classification
 
 
-def _interactive_title_description(
-    console: Console, feature_table_id: str
-) -> tuple[str, str | None]:
+def _slugify_for_id(text: str) -> str:
+    """Map a free-form string (typically the parquet basename) to a
+    manifest-id-shaped slug: lowercase, underscores for word boundaries,
+    no leading non-alphanumeric."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").lower()
+    return slug or "feature_table"
+
+
+def _interactive_feature_table_identity(
+    console: Console, parquet: Path, initial_id: str | None
+) -> tuple[str, str, str | None]:
+    """Prompt for feature_table id + title + description. Returns the trio.
+
+    The id is the manifest's `feature_tables[].id` — the stable handle
+    that shows up in /explore URLs (`?ft=<id>`), in recipes
+    (`explorer.ft: <id>`), and in operator examples. Slug-shaped:
+    lowercase, kebab or underscore.
+    """
     console.print()
-    console.rule("[bold]Step 3/6 — Feature table title + description[/]")
+    console.rule("[bold]Step 1/6 — Feature table identity[/]")
+    console.print(
+        "[dim]The `id` is the stable handle the SPA references in URLs "
+        "(?ft=<id>), recipes, and examples. Lowercase kebab/underscore; "
+        "rename later only with a coordinated client/data migration.[/]"
+    )
+    default_id = initial_id or _slugify_for_id(parquet.stem)
+    ft_id = Prompt.ask("feature_table.id", default=default_id, console=console)
+    ft_id = _slugify_for_id(ft_id)  # normalize whatever the user typed
+
     title = Prompt.ask(
-        "Title",
-        default=f"Feature table: {feature_table_id}",
+        "title  (human-readable, shows up in the explorer picker)",
+        default=f"Feature table: {ft_id}",
         console=console,
     )
     description = Prompt.ask(
-        "Description [empty to skip]",
+        "description  [empty to skip]",
         default="",
         console=console,
     )
-    return title, description.strip() or None
+    return ft_id, title, description.strip() or None
 
 
 def _interactive_embeddings(
@@ -739,7 +763,16 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--parquet", type=Path, required=True, help="path to the feature parquet")
-    parser.add_argument("--feature-table-id", required=True, help="manifest's feature_tables[].id")
+    parser.add_argument(
+        "--feature-table-id",
+        default=None,
+        help=(
+            "manifest's feature_tables[].id — the stable handle the SPA uses "
+            "in URLs (?ft=<id>), recipes (explorer.ft: <id>), and examples. "
+            "Prompted interactively when omitted (default: parquet basename "
+            "slugified). Required when --non-interactive."
+        ),
+    )
     parser.add_argument("--out", type=Path, default=Path("/tmp/manifest.yaml"), help="output manifest path")
     parser.add_argument(
         "--parquet-uri",
@@ -782,9 +815,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Interactive (or skip) ──
     if args.non_interactive:
+        if args.feature_table_id is None:
+            console.print("[red]--non-interactive: --feature-table-id is required[/]")
+            return 2
         if auto_id is None:
             console.print("[red]--non-interactive: no id column auto-detected; pass --id-column[/]")
             return 2
+        feature_table_id = _slugify_for_id(args.feature_table_id)
+        title = f"Feature table: {feature_table_id}"
+        description = None
         id_column = auto_id
         id_like_set = set(_id_like_columns(df, id_column))
         # Wire default_color_by from the first categorical column when present.
@@ -795,11 +834,12 @@ def main(argv: list[str] | None = None) -> int:
         ]
         for emb in embeddings:
             emb["default_color_by"] = categorical_preview[0] if categorical_preview else None
-        title = f"Feature table: {args.feature_table_id}"
-        description = None
         categories: list[dict[str, Any]] = []
         knn = {"scaling": "zscore", "clip_percentiles": [0.1, 99.9]}
     else:
+        feature_table_id, title, description = _interactive_feature_table_identity(
+            console, args.parquet, args.feature_table_id
+        )
         id_column = _interactive_pick_id_column(console, df, auto_id)
         id_like_set = set(_id_like_columns(df, id_column))
         classification = {
@@ -814,7 +854,6 @@ def main(argv: list[str] | None = None) -> int:
             for col in df.columns
         }
         classification = _interactive_classification_review(console, df, classification)
-        title, description = _interactive_title_description(console, args.feature_table_id)
         embeddings = _interactive_embeddings(console, embeddings, classification, df)
         categories = _interactive_categories(console, df, classification)
         knn = _interactive_knn(console)
@@ -835,7 +874,7 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     manifest = _build_manifest_dict(
-        feature_table_id=args.feature_table_id,
+        feature_table_id=feature_table_id,
         title=title,
         description=description,
         parquet_uri=parquet_uri,
@@ -866,7 +905,7 @@ def main(argv: list[str] | None = None) -> int:
     console.print(f"[bold green]wrote[/] {args.out}")
 
     # ── Datastack snippet ──
-    _print_datastack_snippet(console, args.out, args.feature_table_id)
+    _print_datastack_snippet(console, args.out, feature_table_id)
 
     return 0
 
