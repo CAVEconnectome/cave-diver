@@ -59,3 +59,41 @@ def test_source_for_returns_none_when_disabled():
             feature_explorer=FeatureExplorerConfig(enabled=False),
         )
         assert source_for("minnie65_public", ds_cfg) is None
+
+
+def test_get_manifest_cache_key_is_datastack_only(monkeypatch, tmp_path):
+    """The cache is keyed by datastack alone — the manifest_uri is
+    a deterministic function of the datastack, so adding it to the
+    key would just be redundant."""
+    from cave_data_viewer.api import create_app
+    from cave_data_viewer.api.services.embeddings.manifest import get_manifest
+
+    # Build a real on-disk per-FT YAML.
+    ft_dir = tmp_path / "feature_tables" / "ds_a"
+    ft_dir.mkdir(parents=True)
+    (ft_dir / "foo.yaml").write_text(
+        "schema_version: 1\n"
+        "id: foo\n"
+        "title: Foo\n"
+        "source: {kind: parquet, uri: gs://x/foo.parquet}\n"
+        "id_column: cell_id\n"
+        "cell_id_source_table: nucleus_detection_v0\n"
+    )
+
+    monkeypatch.setenv("CDV_FEATURE_TABLES_BASE_URI", f"file://{tmp_path}/")
+    app = create_app()
+    with app.app_context():
+        manifest_uri = f"file://{tmp_path}/feature_tables/ds_a/"
+        # First call: fetches; second call: cache hit. Inspect the cache
+        # to confirm there's exactly one entry keyed by ('ds_a',).
+        m1 = get_manifest("ds_a", manifest_uri)
+        m2 = get_manifest("ds_a", manifest_uri)
+        assert m1.feature_tables[0].id == "foo"
+        assert m2.feature_tables[0].id == "foo"
+        cache = app.extensions["dcv_embedding_manifest_cache"]
+        # Inspect cache internals — the key is a tuple containing only
+        # the datastack name.
+        keys = list(cache._cache.keys()) if hasattr(cache, "_cache") else []
+        assert ("ds_a",) in keys, (
+            f"expected ('ds_a',) in cache keys, got {keys}"
+        )

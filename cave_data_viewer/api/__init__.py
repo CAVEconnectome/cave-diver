@@ -233,7 +233,9 @@ def _init_l2_immutable_caches(app: Flask) -> None:
     # propagate within ~5 min via background SWR refresh), hard bounds how
     # long we'll serve stale data if refresh keeps failing. L1-only — the
     # manifest is small (single-digit kB) so the GCS infrastructure overhead
-    # isn't worth it. Key shape: (datastack, manifest_uri).
+    # isn't worth it. Key shape: `(datastack,)` — the URI is a
+    # deterministic function of CDV_FEATURE_TABLES_BASE_URI + the
+    # datastack name, so we don't need to key on it.
     soft_manifest = app.config["CACHE_EMBEDDING_MANIFEST_SOFT_TTL_SECONDS"]
     hard_manifest = app.config["CACHE_EMBEDDING_MANIFEST_HARD_TTL_SECONDS"]
     app.extensions["dcv_embedding_manifest_cache"] = SwrCache(

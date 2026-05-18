@@ -542,20 +542,26 @@ def get_manifest(
 ) -> Manifest:
     """Return the manifest, cached.
 
-    Cache hit, fresh: return immediately. Cache hit, stale: return
-    immediately and schedule a background refresh. Cache miss: synchronous
-    fetch; first-fetch errors propagate so a misconfigured manifest_uri
-    is obvious from the very first request.
+    Cache key is ``(datastack,)`` — the manifest URI is a
+    deterministic function of the deploy-time base + the datastack
+    name (both immutable for the lifetime of the process), so adding
+    it to the key would just be redundant. The ``uri`` argument is
+    retained as the fetch target.
 
-    When no cache is registered on the app (e.g. unit-test context with
-    no full app-context setup), falls through to a direct fetch every
-    time.
+    Cache hit, fresh: return immediately. Cache hit, stale: return
+    immediately and schedule a background refresh. Cache miss:
+    synchronous fetch; first-fetch errors propagate so a
+    misconfigured manifest_uri is obvious from the very first request.
+
+    When no cache is registered on the app (e.g. unit-test context
+    with no full app-context setup), falls through to a direct fetch
+    every time.
     """
     cache = current_app.extensions.get("dcv_embedding_manifest_cache")
     if cache is None:
         return fetch_and_parse_manifest(uri, project=project)
 
-    key = (datastack, uri)
+    key = (datastack,)
     hit = cache.get(key)
     if hit is None:
         manifest = fetch_and_parse_manifest(uri, project=project)
