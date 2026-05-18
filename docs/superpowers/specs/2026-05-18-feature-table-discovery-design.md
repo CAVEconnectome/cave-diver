@@ -25,6 +25,7 @@ This spec removes the per-datastack URI, fixes the host-path leakage, deletes un
 - One env var configures the base URI for the whole deployment. Datastack YAMLs are deploy-portable.
 - Schema is strictly smaller after the change.
 - **Every committed YAML is reproducible from a scaffolder.** No more hand-authored config files. The scaffolders are the operator-facing authoring tools; they must produce output that matches what we'd hand-write.
+- **Scaffolders pick filenames and paths.** The operator answers content questions (datastack name, parquet path, etc.); the scaffolder computes the output path from the convention. `--out` / `--outdir` become overrides for unusual cases (e.g. previewing into `/tmp`), not part of the common-case invocation. The script prints the computed path so the operator knows where it landed.
 
 ## Non-goals
 
@@ -114,10 +115,11 @@ Backwards compatibility is not preserved (this is a pre-deployment refactor).
    - This synthetic catalog is what the Docker image bundles. `docker build && docker run` against either `minnie65_public` or `minnie65_phase3_v1` serves the synthetic feature table from the bundled `/app/config/feature_tables/`.
    - The dev-laptop Perisomatic catalog and the Docker proving-ground catalog co-exist without conflict: they live in the same directory but have different `id` values.
 
-4. **Scaffolders:**
-   - `scripts/make_sample_embedding.py`: change default `--outdir` to `<repo>/config/feature_tables/<ds>/`; add `--datastack` (default `minnie65_public`). Update the trailing "next steps" print to match the convention; remove the `feature_explorer:` snippet (no manifest_uri to print anymore).
-   - `scripts/scaffold_feature_explorer.py`: change default `--out` to `<repo>/config/feature_tables/<ds>/<id>.yaml`; add `--datastack` (required when interactive default insufficient). Confirm the filename-equals-id check is enforced before write.
-   - **New: `scripts/scaffold_aligned_volume.py`.** Emits a heavily-commented `config/aligned_volumes/<name>.yaml` skeleton. Operator fills in the spatial transform parameters (no useful introspection — coordinate transforms are domain knowledge, not detectable from a parquet). Pattern mirrors `scaffold_datastack.py`: every common knob shown, commented; defaults match the cortex-volume shape since that's the only registered provider today.
+4. **Scaffolders.** Common invocation principle: the operator passes content args (datastack name, parquet path, feature-table id); the scaffolder computes the output path from the convention and writes there. `--out` exists only as an override for unusual destinations. Each script prints the resolved output path on success.
+   - `scripts/scaffold_datastack.py`: already writes to `config/datastacks/<datastack>.yaml` from `--datastack`. Update the template to emit the new `cell_id_lookup: {kind, name}` block and the trimmed `feature_explorer: {enabled, cell_id_source_table}` block. `--public` and `--internal` toggle `live_mode` as today.
+   - `scripts/make_sample_embedding.py`: takes `--datastack` (default `minnie65_public`), writes `config/feature_tables/<ds>/<sample-id>.yaml` and `config/feature_tables/<ds>/<sample-id>.parquet` (both committed; the sample is small). Drops the `--outdir` default and the `feature_explorer:` printout (no `manifest_uri` to print).
+   - `scripts/scaffold_feature_explorer.py`: takes `--parquet` and `--datastack`; the interactive id-naming step computes the output path as `config/feature_tables/<ds>/<id>.yaml`. The filename-equals-id rule is enforced structurally — there is no `--out` flag in the common case, so the basename can't drift from `id`.
+   - **New: `scripts/scaffold_aligned_volume.py`.** Takes `--name`; writes `config/aligned_volumes/<name>.yaml` as a heavily-commented skeleton. Operator fills in the spatial transform parameters (no useful introspection — coordinate transforms are domain knowledge, not detectable from a parquet). Pattern mirrors `scaffold_datastack.py`: every common knob shown, commented; defaults match the cortex-volume shape since that's the only registered provider today.
 
 ### Validation gate — rebuild-from-scratch
 
