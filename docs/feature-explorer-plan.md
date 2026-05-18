@@ -30,7 +30,7 @@ All of these reduce to "the explorer can read both parquet-native columns AND ex
 | --- | --- |
 | Data source | Precomputed **parquet** per (datastack, embedding). v1 stores files in the same GCS bucket as the L2 cache. Loader sits behind an `EmbeddingSource` interface so a future "catalog" service can drop in without touching the explorer. |
 | **Discovery** | The datastack YAML points to a **GCS manifest file** (`manifest_uri:`) that lists the available embeddings; the inline embedding list does *not* live in the datastack YAML. Adding a new embedding = drop a parquet + edit the manifest in GCS, no backend redeploy. Manifest is cached with SWR semantics (soft TTL ~5 min) so changes propagate quickly. v1 ships `ManifestEmbeddingSource`; the future "catalog service" is just a second `EmbeddingSource` implementation that calls HTTP. |
-| **Identity key** | Features are **indexed by `cell_id`** (stable across proofreading), not by `root_id`. Features are *computed* against a specific root_id at a specific mat_version, but stored/served keyed on cell_id. Crossing the boundary into `/neuron` or Neuroglancer requires translating cell_id → current root_id at the requested mat_version, using the existing `services/cell_id.py` infrastructure (`cell_id_lookup_view` in the datastack YAML). |
+| **Identity key** | Features are **indexed by `cell_id`** (stable across proofreading), not by `root_id`. Features are *computed* against a specific root_id at a specific mat_version, but stored/served keyed on cell_id. Crossing the boundary into `/neuron` or Neuroglancer requires translating cell_id → current root_id at the requested mat_version, using the existing `services/cell_id.py` infrastructure (`cell_id_lookup` in the datastack YAML). |
 | Scale | 50k-500k cells per embedding. **Server-rendered Plotly with `scattergl`** (WebGL). Wire format is column-arrays, not per-point objects. The component is isolated enough that swapping to a custom deck.gl renderer later doesn't change the URL shape or the API. |
 | Scope v1 | Find-cell + kNN, lasso/box select, color/filter by any feature column **OR any column from a decoration table the user has attached via `?dec=`**. Decoration values are joined onto cell_ids through the cell_id→root_id resolver at the current `?mv`. Distribution-overlay (selected vs rest histograms) is **deferred** (clean to add later). |
 | Placement | New top-level route `/explore`, sibling to `/neuron` and `/tables`. |
@@ -44,7 +44,7 @@ Concretely:
 - The parquet's primary key is `cell_id`. Optionally a `source_root_id` + `source_mat_version` audit pair records which root the features were computed against, for traceability.
 - The cell_id namespace is **anchored to a specific source table per datastack** (e.g. `nucleus_detection_v0` for minnie65). The embedding config names that source table explicitly so the resolver knows which lookup view to query and so we can validate at load time that the parquet's ids belong to the right namespace. Different datastacks have different source tables; the same parquet cannot be reused across datastacks unless the source table is identical.
 - All explorer-internal flows (highlight, kNN, color, filter, lasso) stay in cell_id space — never call CAVE.
-- Crossing into `/neuron` or Neuroglancer triggers a **cell_id → root_id resolve at the user's chosen mat_version** (or live timestamp), via `services/cell_id.py` using the per-datastack `cell_id_lookup_view`. Resolutions can be missing (cell deleted at this mat_version) or ambiguous (re-merged) — both cases need clear UI handling (greyed-out link + tooltip).
+- Crossing into `/neuron` or Neuroglancer triggers a **cell_id → root_id resolve at the user's chosen mat_version** (or live timestamp), via `services/cell_id.py` using the per-datastack `cell_id_lookup`. Resolutions can be missing (cell deleted at this mat_version) or ambiguous (re-merged) — both cases need clear UI handling (greyed-out link + tooltip).
 
 ## Architecture summary
 
@@ -113,7 +113,7 @@ feature_explorer:
   # discoverable through the manifest. cell_id values in the parquets are
   # validated to be a subset of this table's rows (at the parquet's
   # source_mat_version). The cell_id -> root_id resolver uses the
-  # datastack's existing `cell_id_lookup_view` to translate at query time.
+  # datastack's existing `cell_id_lookup` to translate at query time.
   cell_id_source_table: nucleus_detection_v0
 
   # Pointer to the embedding catalog manifest. Supports gs://, file://, and
@@ -302,7 +302,7 @@ Lifecycle: embedding parquets sit under a separate GCS prefix (e.g. `embeddings/
 
 The **points / column / knn-by-cell_id** endpoints do not need a CAVEclient — they're pure reads of the cached parquet/index. They still go through the standard auth decorator chain so that `CDV_DEV_AUTH_BYPASS=1` works locally and `middle_auth_client` gates production access exactly like every other endpoint.
 
-The **resolve_roots** endpoint (and the `knn` endpoint's optional reverse `root_id` → `cell_id` path) **does** call CAVE via `services/cell_id.py`. The cell_id ↔ root_id machinery is already in place — see `endpoints/cell_ids.py`, `services/cell_id.py`, and the datastack YAML's `cell_id_lookup_view` / `root_id_lookup_main_table` / `root_id_lookup_alt_tables` fields. The new resolver service wraps those calls with batching and caching tuned to the explorer's access patterns (many ids, materialized mode dominant).
+The **resolve_roots** endpoint (and the `knn` endpoint's optional reverse `root_id` → `cell_id` path) **does** call CAVE via `services/cell_id.py`. The cell_id ↔ root_id machinery is already in place — see `endpoints/cell_ids.py`, `services/cell_id.py`, and the datastack YAML's `cell_id_lookup` / `root_id_lookup_main_table` / `root_id_lookup_alt_tables` fields. The new resolver service wraps those calls with batching and caching tuned to the explorer's access patterns (many ids, materialized mode dominant).
 
 ## Frontend implementation
 

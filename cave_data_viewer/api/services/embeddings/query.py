@@ -56,7 +56,7 @@ class FeatureTableQuery:
         Resolved ``FeatureTableSpec`` from the manifest.
     cfg
         Loaded ``DatastackConfig``. Forwarded to the resolver so it can
-        find ``cell_id_lookup_view`` and friends.
+        find the ``cell_id_lookup`` block and friends.
     client_factory
         Optional zero-arg callable returning a CAVEclient. Required when
         ``frame()`` is asked to merge decoration columns; not needed for
@@ -140,7 +140,7 @@ class FeatureTableQuery:
             self.client_factory is not None
             and self.mat_version is not None
             and self.mat_version != "live"
-            and getattr(self.cfg, "cell_id_lookup_view", None)
+            and getattr(self.cfg, "cell_id_lookup", None) is not None
         ):
             try:
                 from ..cell_id import cell_ids_to_positions

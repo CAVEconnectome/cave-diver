@@ -78,7 +78,7 @@ landing page is empty and the cell-id input is hidden.
 | --- | --- | --- | --- | --- |
 | `live_mode` | `bool` | `true` | optional | Whether the SPA's version picker offers "live" alongside the integer mat versions. Set `false` for release datastacks where only the published versions are meaningful. |
 | `synapse` | `SynapseConfig?` | `null` (inherits) | optional | Field-level override on top of the aligned-volume's `synapse:` block. Omit entirely to inherit; set individual fields to override only those. |
-| `cell_id_lookup_view` | `string?` | `null` | optional | Materialized view that maps cell_id → root_id (and supervoxel_id). Forward direction of the cell-id ↔ root_id lookup. |
+| `cell_id_lookup` | `CellIdLookup?` | `null` | optional | Discriminated block (`kind: view\|table`, `name: <resource>`) naming a CAVE resource that maps cell_id → root_id. Forward direction of the cell-id ↔ root_id lookup. |
 | `root_id_lookup_main_table` | `string?` | `null` | optional | Primary annotation table for the reverse direction (root_id → cell_id). |
 | `root_id_lookup_alt_tables` | `[string]` | `[]` | optional | Additional annotation tables walked after the main table for the reverse lookup, typically for cells whose primary annotation has been split or merged out. |
 | `decoration_warmup` | `DecorationWarmup?` | `null` (off) | optional | Periodic background refresh of decoration tables. K8s/HPA users probably want this on; dev users almost never. |
@@ -263,28 +263,37 @@ keep.
 ## Cell-id lookup
 
 ```yaml
-cell_id_lookup_view: nucleus_detection_lookup_v1
+cell_id_lookup:
+  kind: view
+  name: nucleus_detection_lookup_v1
 root_id_lookup_main_table: nucleus_detection_v0
 root_id_lookup_alt_tables:
   - nucleus_alternative_points
 ```
 
 Three related fields. All are optional, all default to null/empty. The
-SPA hides the cell-id input box entirely when both `cell_id_lookup_view`
+SPA hides the cell-id input box entirely when both `cell_id_lookup`
 and `root_id_lookup_main_table` are absent — so a datastack with no
 cell-id concept (BANC currently) just omits the whole block.
 
 **The two directions.** Cell ids (typically nucleus-table ids) are
 persistent across proofreading splits/merges; root ids are not. The
-forward direction (cell_id → current root_id) uses a materialized view;
-the reverse direction (root_id → cell_id) walks one or more annotation
-tables.
+forward direction (cell_id → current root_id) reads from a CAVE
+resource — either a materialized **view** or an annotation **table**.
+The reverse direction (root_id → cell_id) walks one or more annotation
+tables (no view counterpart in this codebase).
 
 | Field | Type | Direction | Required for that direction |
 | --- | --- | --- | --- |
-| `cell_id_lookup_view` | `string?` | cell_id → root_id | Yes — the view is the only way the forward direction works. |
+| `cell_id_lookup` | `{kind: view\|table, name: string}?` | cell_id → root_id | Yes — names the CAVE resource that answers the forward direction. `kind` picks `query_view` vs `query_table` at the API layer. |
 | `root_id_lookup_main_table` | `string?` | root_id → cell_id (primary) | Yes — primary table for the reverse lookup. |
 | `root_id_lookup_alt_tables` | `[string]` | root_id → cell_id (fallback) | No — searched after the main table for cells whose primary annotation has been split or merged out. |
+
+**Why a block instead of two top-level fields.** Carrying `kind` and
+`name` as one block means Pydantic structurally enforces "both present
+or neither" — there's no way to set just one. The previous shape
+(separate `cell_id_lookup_view` / `cell_id_lookup_table` XOR fields)
+let copy-paste edits land in the wrong field and silently mis-dispatch.
 
 **The view is not the same as the main table.** They typically share a
 prefix (`nucleus_detection_v0` and `nucleus_detection_lookup_v1`) but
@@ -302,7 +311,9 @@ table, root_ids on the split-off cells fail to look up.
 publishes only the forward direction (no reverse lookup):
 
 ```yaml
-cell_id_lookup_view: nucleus_detection_lookup_v1
+cell_id_lookup:
+  kind: view
+  name: nucleus_detection_lookup_v1
 # no root_id_lookup_main_table — reverse lookups return "not found"
 # but the SPA still shows the cell-id input.
 ```
@@ -863,7 +874,9 @@ key:
 live_mode: false
 
 # Cell-id lookup (forward + reverse).
-cell_id_lookup_view: nucleus_detection_lookup_v1
+cell_id_lookup:
+  kind: view
+  name: nucleus_detection_lookup_v1
 root_id_lookup_main_table: nucleus_detection_v0
 root_id_lookup_alt_tables:
   - nucleus_alternative_points

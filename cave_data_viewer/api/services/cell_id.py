@@ -5,7 +5,7 @@ proofreading splits/merges. Root ids do not. To go between them we follow the
 pattern from `ceesem/cortical-tools` (common.py + microns_public.py):
 
   cell_id → root_id  (forward)
-    Query a materialized view (`cell_id_lookup_table`) keyed on `id`.
+    Query a CAVE resource (`cell_id_lookup`) keyed on `id`.
     - In materialized mode the view's `pt_root_id` is what we want.
     - In live mode we resolve `pt_supervoxel_id` → current root via the
       chunkedgraph (the view itself doesn't update with edits).
@@ -321,8 +321,7 @@ def cell_ids_to_root_ids(
     if resolved is None:
         raise ValueError(
             "This datastack has no cell_id forward lookup configured — set "
-            "either `cell_id_lookup_view` or `cell_id_lookup_table` in the "
-            "datastack YAML."
+            "a `cell_id_lookup: {kind, name}` block in the datastack YAML."
         )
     view, lookup_kind = resolved
     cell_ids = [int(x) for x in cell_ids]
@@ -412,8 +411,7 @@ def cell_ids_to_positions(
     if resolved is None:
         raise ValueError(
             "This datastack has no cell_id forward lookup configured — set "
-            "either `cell_id_lookup_view` or `cell_id_lookup_table` in the "
-            "datastack YAML."
+            "a `cell_id_lookup: {kind, name}` block in the datastack YAML."
         )
     view, lookup_kind = resolved
     cell_ids = [int(x) for x in cell_ids]

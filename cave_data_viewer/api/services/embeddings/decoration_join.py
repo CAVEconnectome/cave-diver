@@ -100,7 +100,7 @@ def join_decoration_column(
         right auth context.
     cfg
         Loaded ``DatastackConfig``. Used by the resolver to find
-        ``cell_id_lookup_view`` and friends.
+        the ``cell_id_lookup`` block and friends.
     ds
         Datastack name (NOT the cache alias — cache aliasing is applied
         internally where needed).

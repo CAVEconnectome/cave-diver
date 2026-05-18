@@ -49,12 +49,15 @@ live_mode: false
 # Cell-id ↔ root_id lookup. Cell ids (typically nucleus ids) survive
 # proofreading splits/merges; root_ids do not.
 #
-# Forward direction (cell_id → root_id) is ONE of:
-#   cell_id_lookup_view  — a CAVE materialized view (most common)
-#   cell_id_lookup_table — a CAVE annotation table
-# CAVE distinguishes views from tables at the API level (`query_view`
-# vs `query_table`), so the config carries them as two distinct
-# fields. Set exactly one — both populated is a config error.
+# Forward direction (cell_id → root_id): the `cell_id_lookup` block
+# names a CAVE resource and its kind. CAVE distinguishes views from
+# tables at the API level (`query_view` vs `query_table`); the
+# consuming code dispatches on `kind`. Carrying name + kind as one
+# block keeps them from drifting at edit time.
+#
+#   cell_id_lookup:
+#     kind: view   # or "table"
+#     name: <resource name>
 #
 # Reverse direction (root_id → cell_id):
 #   root_id_lookup_main_table  — primary annotation table
@@ -63,9 +66,11 @@ live_mode: false
 #                                match (cells whose nucleus moved
 #                                across edits, etc.)
 #
-# Omit all of these if the datastack has no cell-id concept; the SPA
-# hides the cell-id input automatically.
-cell_id_lookup_view: nucleus_detection_lookup_v1   # OR cell_id_lookup_table
+# Omit the `cell_id_lookup:` block entirely if the datastack has no
+# cell-id concept; the SPA hides the cell-id input automatically.
+cell_id_lookup:
+  kind: view
+  name: nucleus_detection_lookup_v1
 root_id_lookup_main_table: nucleus_detection_v0
 root_id_lookup_alt_tables:
   - nucleus_alternative_points

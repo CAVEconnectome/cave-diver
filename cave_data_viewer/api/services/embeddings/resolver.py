@@ -73,7 +73,7 @@ def resolve_cell_ids_to_root_ids(
     from the underlying ``cell_ids_to_root_ids`` primitive.
 
     Raises ``ValueError`` (propagated from the primitive) when the
-    datastack has no ``cell_id_lookup_view`` configured. The endpoint layer
+    datastack has no ``cell_id_lookup`` block configured. The endpoint layer
     surfaces that as a 422.
     """
     # Local import to keep this module free of circular dependencies

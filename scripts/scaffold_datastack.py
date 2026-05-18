@@ -77,11 +77,12 @@ def _render_yaml(datastack: str, aligned_volume: str | None, public: bool) -> st
 # keys if the datastack has no cell-id concept — the SPA hides the
 # cell-id input automatically.
 #
-# Forward direction: pick ONE — either a materialized view OR an
-# annotation table. CAVE distinguishes them at the API level (the
-# consuming code dispatches on which is set). Set both = config error.
-# cell_id_lookup_view: nucleus_detection_lookup_v1    # CAVE materialized view
-# cell_id_lookup_table: some_annotation_table_v1      # OR a CAVE annotation table
+# Forward direction: name a CAVE resource and its kind. CAVE distinguishes
+# views from tables at the API level (the consuming code dispatches on
+# `kind`).
+# cell_id_lookup:
+#   kind: view                                          # or "table"
+#   name: nucleus_detection_lookup_v1
 # root_id_lookup_main_table: nucleus_detection_v0
 # root_id_lookup_alt_tables:
 #   - nucleus_alternative_points

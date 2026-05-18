@@ -289,7 +289,7 @@ bindings:
     cave_datastack: minnie65_public             # CAVE-facing name (often same)
     live_mode: false                            # was top-level
     cache_alias: minnie65_phase3_v1             # was top-level
-    cell_id_lookup_view: ...                    # was top-level
+    cell_id_lookup: ...                         # was top-level (block)
     root_id_lookup_main_table: ...
     root_id_lookup_alt_tables: [...]
     synapse: {...}                              # was top-level
@@ -346,7 +346,7 @@ optional fields whose presence/absence acts as a hidden capability flag:
 | Today's implicit flag | What it gates | Future explicit form |
 |----------------------|---------------|----------------------|
 | `feature_explorer.enabled: true` | `/explore` route | `capabilities.explorer` |
-| `cell_id_lookup_view` set | Cell-id input box in `/neuron` + the resolver | `capabilities.cell_id_resolution` (forward) |
+| `cell_id_lookup` set | Cell-id input box in `/neuron` + the resolver | `capabilities.cell_id_resolution` (forward) |
 | `root_id_lookup_main_table` set | Reverse cell-id lookup; the `?cell_id=` URL key on `/neuron` | `capabilities.cell_id_resolution` (reverse) |
 | `live_mode: true` | "live" entry in the mat-version picker | binding kind `live` (live mode is binding-shaped) |
 
