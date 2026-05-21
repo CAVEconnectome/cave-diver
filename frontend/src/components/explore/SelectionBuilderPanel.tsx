@@ -224,6 +224,7 @@ export function SelectionBuilderPanel({
         <button
           type="button"
           onClick={() => setPicking((v) => !v)}
+          title={picking ? "Close the column picker" : "Pick a column to add as a filter"}
         >
           {picking ? "× cancel" : "+ add column"}
         </button>
@@ -247,7 +248,7 @@ export function SelectionBuilderPanel({
         <>
           <div className="explore-grow-stats">
             {ready
-              ? `${matchCount.toLocaleString()} cells match all predicates`
+              ? `${matchCount.toLocaleString()} cells match all filters`
               : "loading column data…"}
           </div>
           {/* Two clusters split by a flex spacer: the "selection bag"
@@ -280,7 +281,7 @@ export function SelectionBuilderPanel({
               className="scope-action"
               onClick={handleFilterScope}
               disabled={!ready}
-              title="Apply the predicate as the active Scope (?cells=) — narrows what the scatter / table render and what subsequent lasso / select actions see"
+              title="Apply the filter as the active Scope (?cells=) — narrows what the scatter / table render and what subsequent lasso / select actions see"
             >
               Set scope
             </button>
@@ -408,7 +409,7 @@ function PredicateRow({
       <div className="explore-select-row">
         <div className="explore-select-row-head">
           <span className="explore-select-row-col">{column}</span>
-          <button type="button" onClick={onRemove}>×</button>
+          <button type="button" onClick={onRemove} title="Remove this column">×</button>
         </div>
         <div className="explore-grow-error">
           Failed to load column.
@@ -934,6 +935,7 @@ function CategoricalPredicate({
           type="button"
           onClick={selectAll}
           disabled={predicate.values.size === rows.rows.length}
+          title="Check every value"
         >
           all
         </button>
@@ -941,6 +943,7 @@ function CategoricalPredicate({
           type="button"
           onClick={selectNone}
           disabled={predicate.values.size === 0}
+          title="Uncheck every value"
         >
           none
         </button>

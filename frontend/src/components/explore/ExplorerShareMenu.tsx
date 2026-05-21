@@ -127,10 +127,18 @@ export function ExplorerShareMenu({ ds }: Props) {
     <details className="sidebar-share explorer-share" open>
       <summary>Share / Save</summary>
       <div className="sidebar-share-actions">
-        <button type="button" onClick={() => onCopy("query")}>
+        <button
+          type="button"
+          onClick={() => onCopy("query")}
+          title="Copy a URL that reproduces this explorer view, including the current selection"
+        >
           {copied === "query" ? "Copied!" : "Copy query link"}
         </button>
-        <button type="button" onClick={() => onCopy("recipe")}>
+        <button
+          type="button"
+          onClick={() => onCopy("recipe")}
+          title="Copy a URL that applies this explorer view as a recipe (without the current selection)"
+        >
           {copied === "recipe" ? "Copied!" : "Copy recipe link"}
         </button>
         <button
@@ -174,7 +182,13 @@ export function ExplorerShareMenu({ ds }: Props) {
                 cell{selection.length === 1 ? "" : "s"}.
               </p>
             )}
-            <button type="submit" disabled={!title.trim()}>Save</button>
+            <button
+              type="submit"
+              disabled={!title.trim()}
+              title="Save this explorer view to your personal recipes for this datastack"
+            >
+              Save
+            </button>
           </form>
         )}
         <YamlActionsRow

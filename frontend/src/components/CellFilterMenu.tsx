@@ -127,7 +127,7 @@ export function CellFilterMenu({
     scopeSource === "snapshot"
       ? `${label} — ${directScopeCount.toLocaleString()} cells from selection snapshot`
       : scopeSource === "predicate"
-        ? `${label} — ${predicateCount} active predicate${predicateCount === 1 ? "" : "s"}`
+        ? `${label} — ${predicateCount} active filter${predicateCount === 1 ? "" : "s"}`
         : `${label} — which cells are active (build with the Selection Builder)`;
 
   // Close on outside click + Escape. Same pattern as the colormap picker
@@ -245,7 +245,7 @@ function ScopeHeader({
     scopeSource === "snapshot"
       ? `Scoped to ${directScopeCount.toLocaleString()} cells (snapshot)`
       : scopeSource === "predicate"
-        ? `By predicate (${predicateCount} clause${predicateCount === 1 ? "" : "s"})`
+        ? `Filtered (${predicateCount} clause${predicateCount === 1 ? "" : "s"})`
         : "No scope — full universe";
   return (
     <div className="cell-filter-menu-header">
@@ -323,7 +323,7 @@ function ScopeFooter({
         disabled={!canClear}
         title={
           canClear
-            ? "Reset to the full universe — clears predicates and snapshot, leaves selection intact"
+            ? "Reset to the full universe — clears filters and snapshot, leaves selection intact"
             : "Already on the full universe"
         }
         onClick={onClearScope}

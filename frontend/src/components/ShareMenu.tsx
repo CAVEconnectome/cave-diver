@@ -114,10 +114,18 @@ export function ShareMenu({ ds }: { ds: string }) {
     <details className="sidebar-share" open>
       <summary>Share / Save</summary>
       <div className="sidebar-share-actions">
-        <button type="button" onClick={() => onCopy("query")}>
+        <button
+          type="button"
+          onClick={() => onCopy("query")}
+          title="Copy a URL that reproduces the current cell, decorations, and filters"
+        >
           {copied === "query" ? "Copied!" : "Copy query link"}
         </button>
-        <button type="button" onClick={() => onCopy("recipe")}>
+        <button
+          type="button"
+          onClick={() => onCopy("recipe")}
+          title="Copy a URL that applies this view's recipe to a cell of the recipient's choice"
+        >
           {copied === "recipe" ? "Copied!" : "Copy recipe link"}
         </button>
         <button
@@ -155,7 +163,13 @@ export function ShareMenu({ ds }: { ds: string }) {
                 placeholder="What this view is good for"
               />
             </label>
-            <button type="submit" disabled={!title.trim()}>Save</button>
+            <button
+              type="submit"
+              disabled={!title.trim()}
+              title="Save this view to your personal recipes for this datastack"
+            >
+              Save
+            </button>
           </form>
         )}
         <YamlActionsRow

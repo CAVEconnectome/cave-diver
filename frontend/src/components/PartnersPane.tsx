@@ -133,6 +133,7 @@ export function PartnersPane({ ds, rootId, matVersion, bundle, decorationTables 
           aria-selected={tab === "out"}
           className={tab === "out" ? "active" : ""}
           onClick={() => setTab("out")}
+          title="Downstream partners — cells this neuron synapses onto"
         >
           Output ({counts.out})
         </button>
@@ -141,6 +142,7 @@ export function PartnersPane({ ds, rootId, matVersion, bundle, decorationTables 
           aria-selected={tab === "in"}
           className={tab === "in" ? "active" : ""}
           onClick={() => setTab("in")}
+          title="Upstream partners — cells that synapse onto this neuron"
         >
           Input ({counts.in})
         </button>

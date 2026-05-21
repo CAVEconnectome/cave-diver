@@ -321,10 +321,10 @@ export function CellFilterPanel({ columnGroups, sampleRows, categoriesByTable, a
             title={
               noTables
                 ? "Load a decoration table first"
-                : "Open the predicate builder"
+                : "Open the filter builder"
             }
           >
-            + Build a predicate
+            + Build a filter
           </button>
         ) : (
           <button
@@ -335,10 +335,10 @@ export function CellFilterPanel({ columnGroups, sampleRows, categoriesByTable, a
             title={
               noTables
                 ? "Load a decoration table first"
-                : "Add another predicate"
+                : "Add another filter"
             }
           >
-            + add predicate
+            + add filter
           </button>
         ))}
       {adding && (
@@ -388,7 +388,7 @@ function ChipView({
         type="button"
         onClick={onRemove}
         aria-label="remove"
-        title="Remove this predicate"
+        title="Remove this filter"
       >×</button>
     </span>
   );
@@ -653,7 +653,7 @@ function PredicateBuilder({ tableGroups, sampleRows, categoriesByTable, availabl
               className="cell-filter-builder-select"
               value={boolIdx}
               onChange={(e) => setBoolIdx(Number(e.target.value))}
-              aria-label="predicate"
+              aria-label="filter"
             >
               {BOOL_PREDICATES.map((p, i) => (
                 <option key={i} value={i}>{p.label}</option>
@@ -753,6 +753,7 @@ function PredicateBuilder({ tableGroups, sampleRows, categoriesByTable, availabl
           type="button"
           className="cell-filter-builder-btn"
           onClick={onCancel}
+          title="Discard this draft filter"
         >
           cancel
         </button>
@@ -760,6 +761,7 @@ function PredicateBuilder({ tableGroups, sampleRows, categoriesByTable, availabl
           type="submit"
           className="cell-filter-builder-btn primary"
           disabled={!canSubmit}
+          title="Add this filter to the active set"
         >
           add
         </button>
@@ -841,6 +843,7 @@ function ValueChecklist({
           className="cell-filter-checklist-link"
           onClick={clearAll}
           disabled={selected.size === 0}
+          title="Uncheck every value"
         >
           clear ({selected.size})
         </button>

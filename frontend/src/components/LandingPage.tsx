@@ -6,10 +6,14 @@ import type { ConnectivityRecipe, Recipe } from "../api/types";
 import { useApplyRecipe } from "../tours/useApplyRecipe";
 import {
   getInvalidCount,
+  getPendingDeletion,
   listForDs as listPersonalRecipes,
+  restorePending,
   softRemove as softRemovePersonalRecipe,
   save as savePersonalRecipe,
   subscribe as subscribePersonalRecipes,
+  subscribePendingDeletions,
+  type PendingDeletion,
 } from "../tours/personalRecipes";
 import { adapterForRecipe } from "../tours/adapters/registry";
 import { parseRecipesFromYaml } from "../tours/recipeFromYaml";
@@ -31,6 +35,34 @@ function writeStoredDs(ds: string): void {
     localStorage.setItem(LAST_DS_KEY, ds);
   } catch {
     // localStorage may throw under quota / private-mode; non-fatal.
+  }
+}
+
+// Recipe-section open/closed state — keyed by (ds, kind) so a user's
+// "collapse Connectivity, keep Explorer open" choice survives reloads
+// and cross-datastack navigation. Default is open (the first-view
+// affordance is "see what's here"); we only persist deviations.
+const SECTION_STATE_PREFIX = "cdv:recipes_section_open:";
+function sectionKey(ds: string, kind: "connectivity" | "explorer"): string {
+  return `${SECTION_STATE_PREFIX}${ds}:${kind}`;
+}
+function readSectionOpen(ds: string, kind: "connectivity" | "explorer"): boolean {
+  try {
+    const v = localStorage.getItem(sectionKey(ds, kind));
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+}
+function writeSectionOpen(
+  ds: string,
+  kind: "connectivity" | "explorer",
+  open: boolean,
+): void {
+  try {
+    localStorage.setItem(sectionKey(ds, kind), open ? "1" : "0");
+  } catch {
+    // ignore — quota / private-mode degrade silently.
   }
 }
 
@@ -122,6 +154,7 @@ export function LandingPage() {
                 aria-selected={ds === activeDs}
                 className={`landing-tab${ds === activeDs ? " is-active" : ""}`}
                 onClick={() => setActiveDs(ds)}
+                title={`Show recipes for ${ds}`}
               >
                 {ds}
               </button>
@@ -141,6 +174,14 @@ function DatastackTours({ ds }: { ds: string }) {
   // a YAML upload finishes or the user deletes one.
   const [, setPersonalTick] = useState(0);
   useEffect(() => subscribePersonalRecipes(() => setPersonalTick((n) => n + 1)), []);
+  // Subscribe to pending-deletion changes so the slot wrappers (which
+  // synchronously read getPendingDeletion) re-render when softRemove
+  // marks a recipe or restorePending clears it.
+  const [, setPendingTick] = useState(0);
+  useEffect(
+    () => subscribePendingDeletions(() => setPendingTick((n) => n + 1)),
+    [],
+  );
   const personalRecipes = listPersonalRecipes(ds);
   // Server-reported count of saved recipes the user has on disk that
   // were skipped because they lack a recognized `kind` (legacy
@@ -176,31 +217,55 @@ function DatastackTours({ ds }: { ds: string }) {
         </p>
       )}
       {(builtinRecipes.length > 0 || personalRecipes.length > 0) && (
-        <div className="tour-section">
-          <h4>Recipes</h4>
-          {personalRecipes.length > 0 && (
-            <>
-              <h5 className="tour-subgroup">My recipes</h5>
-              <div className="tour-grid">
-                {personalRecipes.map((r) => (
-                  <RecipeCard key={r.id} ds={ds} recipe={r} personal />
-                ))}
-              </div>
-            </>
-          )}
-          {builtinRecipes.length > 0 && (
-            <>
-              {personalRecipes.length > 0 && (
-                <h5 className="tour-subgroup">Built-in recipes</h5>
-              )}
-              <div className="tour-grid">
-                {builtinRecipes.map((r) => (
-                  <RecipeCard key={r.id} ds={ds} recipe={r} />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <>
+          {(["connectivity", "explorer"] as const).map((kind) => {
+            const personalForKind = personalRecipes.filter((r) => r.kind === kind);
+            const builtinForKind = builtinRecipes.filter((r) => r.kind === kind);
+            const total = personalForKind.length + builtinForKind.length;
+            if (total === 0) return null;
+            const sectionTitle =
+              kind === "connectivity" ? "Connectivity recipes" : "Explorer recipes";
+            return (
+              <details
+                key={kind}
+                className="tour-section"
+                open={readSectionOpen(ds, kind)}
+                onToggle={(e) =>
+                  writeSectionOpen(ds, kind, (e.currentTarget as HTMLDetailsElement).open)
+                }
+              >
+                <summary>
+                  <h4>
+                    {sectionTitle}{" "}
+                    <span className="tour-section-count">({total})</span>
+                  </h4>
+                </summary>
+                {personalForKind.length > 0 && (
+                  <>
+                    <h5 className="tour-subgroup">My recipes</h5>
+                    <div className="tour-grid">
+                      {personalForKind.map((r) => (
+                        <PersonalRecipeSlot key={r.id} ds={ds} recipe={r} />
+                      ))}
+                    </div>
+                  </>
+                )}
+                {builtinForKind.length > 0 && (
+                  <>
+                    {personalForKind.length > 0 && (
+                      <h5 className="tour-subgroup">Built-in recipes</h5>
+                    )}
+                    <div className="tour-grid">
+                      {builtinForKind.map((r) => (
+                        <RecipeCard key={r.id} ds={ds} recipe={r} />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </details>
+            );
+          })}
+        </>
       )}
       <RecipeYamlUploader ds={ds} />
     </section>
@@ -264,10 +329,18 @@ function RecipeYamlUploader({ ds }: { ds: string }) {
         this datastack only.
       </p>
       <div className="recipe-uploader-actions">
-        <button type="button" onClick={() => fileInputRef.current?.click()}>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          title="Pick a recipe YAML file from your computer"
+        >
           Choose file…
         </button>
-        <button type="button" onClick={() => setPasteOpen((s) => !s)}>
+        <button
+          type="button"
+          onClick={() => setPasteOpen((s) => !s)}
+          title={pasteOpen ? "Close the paste box" : "Paste recipe YAML text directly"}
+        >
           {pasteOpen ? "Cancel paste" : "Paste YAML"}
         </button>
         <input
@@ -287,7 +360,11 @@ function RecipeYamlUploader({ ds }: { ds: string }) {
             placeholder={`recipes:\n  - id: my-recipe\n    title: ...`}
             autoFocus
           />
-          <button type="submit" disabled={!pasteText.trim()}>
+          <button
+            type="submit"
+            disabled={!pasteText.trim()}
+            title="Parse the pasted YAML and add the recipes to your personal list"
+          >
             Load
           </button>
         </form>
@@ -315,7 +392,12 @@ function RecipeUploadResult({
           </span>
         )}
         {hasError && <span>✗ {result.errors.length} error{result.errors.length === 1 ? "" : "s"}.</span>}
-        <button type="button" className="link-button" onClick={onDismiss}>
+        <button
+          type="button"
+          className="link-button"
+          onClick={onDismiss}
+          title="Dismiss this upload result"
+        >
           dismiss
         </button>
       </div>
@@ -382,6 +464,53 @@ function summarizeExplorer(t: Extract<Recipe, { kind: "explorer" }>): string {
   return parts.join(" · ");
 }
 
+/** Wrapper that decides what to render in a personal recipe's grid
+ *  slot. While the recipe is pending deletion, shows an inline Undo
+ *  placeholder that occupies the same slot — keeps the grid layout
+ *  stable so the user's eye doesn't have to jump. Otherwise renders a
+ *  normal RecipeCard. */
+function PersonalRecipeSlot({ ds, recipe }: { ds: string; recipe: Recipe }) {
+  const pending = getPendingDeletion(ds, recipe.id);
+  if (pending) {
+    return <PendingDeletionCard pending={pending} />;
+  }
+  return <RecipeCard ds={ds} recipe={recipe} personal />;
+}
+
+/** Inline Undo-delete placeholder. Matches a normal personal RecipeCard's
+ *  dimensions (same .tour-card chrome + .is-personal dashed border) so
+ *  the grid stays put while the user decides. Countdown bar at the
+ *  bottom shrinks over the remaining window; the bar's animation
+ *  duration is pinned to (expiresAt - now) at mount so the visual
+ *  matches the actual commit time. */
+function PendingDeletionCard({ pending }: { pending: PendingDeletion }) {
+  const remainingMs = Math.max(0, pending.expiresAt - Date.now());
+  return (
+    <div className="tour-card is-personal tour-card-pending">
+      <div className="tour-card-header">
+        <h5>Deleted</h5>
+      </div>
+      <p className="tour-desc">
+        <em>{pending.recipe.title}</em>
+      </p>
+      <div className="tour-card-actions">
+        <button
+          type="button"
+          className="tour-cta"
+          onClick={() => restorePending(pending.ds, pending.recipe.id)}
+          title="Restore this recipe before the deletion is committed"
+        >
+          Undo
+        </button>
+      </div>
+      <div
+        className="tour-card-countdown"
+        style={{ animationDuration: `${remainingMs}ms` }}
+      />
+    </div>
+  );
+}
+
 function RecipeCard({ ds, recipe, personal }: { ds: string; recipe: Recipe; personal?: boolean }) {
   const navigate = useNavigate();
   const [currentDs] = useUrlParam("ds");
@@ -427,7 +556,6 @@ function RecipeCard({ ds, recipe, personal }: { ds: string; recipe: Recipe; pers
     <div className={`tour-card${personal ? " is-personal" : ""}`}>
       <div className="tour-card-header">
         <h5>{recipe.title}</h5>
-        <span className={`recipe-kind-chip kind-${recipe.kind}`}>{recipe.kind}</span>
       </div>
       {recipe.description && <p className="tour-desc">{recipe.description}</p>}
       {summarizeTour(recipe) && <p className="tour-meta">{summarizeTour(recipe)}</p>}

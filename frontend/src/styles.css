@@ -1257,12 +1257,14 @@ h1, h2, h3, h4, h5, h6 {
 /* Empty-state "Build a predicate" button — primary affordance when
    the popover has no chips yet. Wider hit target than the old `+`
    icon button so it reads as the obvious first thing to do. */
+/* Primary "+ Build a filter" — iron-gall family, dashed border to
+   read as "add something here, this slot is empty." */
 .cell-filter-add-primary {
   font-size: 12px;
   padding: 6px 10px;
-  background: rgba(99, 102, 241, 0.08);
-  color: #4f46e5;
-  border: 1px dashed #a5b4fc;
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+  border: 1px dashed var(--accent);
   border-radius: 4px;
   cursor: pointer;
   letter-spacing: 0.02em;
@@ -1271,28 +1273,31 @@ h1, h2, h3, h4, h5, h6 {
   text-align: center;
 }
 .cell-filter-add-primary:hover:not(:disabled) {
-  background: rgba(99, 102, 241, 0.16);
-  border-color: #6366f1;
+  background: #c4cce0;
+  border-color: var(--accent-strong);
 }
 .cell-filter-add-primary:disabled {
   opacity: 0.5;
   cursor: default;
 }
-/* Ghost "+ add predicate" link — secondary affordance when chips
-   already exist. Quieter than the primary so it doesn't compete with
-   the chips above it for visual weight. */
+/* Ghost "+ add filter" link — secondary affordance when chips already
+   exist. Iron-gall by default (matches the trigger + primary so the
+   whole filter widget reads as one accent family) but kept lighter
+   weight than the primary so it doesn't compete with the chips above. */
 .cell-filter-add-ghost {
   font-size: 11px;
   padding: 2px 6px;
   background: transparent;
-  color: var(--muted, #6b7280);
+  color: var(--accent);
   border: none;
   cursor: pointer;
   margin-top: 4px;
   align-self: flex-start;
 }
 .cell-filter-add-ghost:hover:not(:disabled) {
-  color: var(--accent, #4f46e5);
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .cell-filter-add-ghost:disabled {
   opacity: 0.5;
@@ -1524,27 +1529,50 @@ h1, h2, h3, h4, h5, h6 {
   position: relative;
   display: inline-block;
 }
+/* Scope-filter trigger button — used identically on the neuron view's
+   plot rail and the explorer's drawer header. Size bumped above the
+   stock pill scale (12px font / 5×14 padding) so it reads as a
+   primary navigational state, not a tertiary action. Active state
+   uses the iron-gall family so it groups with the page's primary
+   accent rather than reserving the warm terracotta for personal-
+   action moments (save/copied/personal-recipe). */
+/* Scope-filter trigger — used identically on the neuron view's plot
+   rail and the explorer's drawer header. Size sits above the stock
+   pill scale so it reads as a primary navigational state, not a
+   tertiary action. Active state uses the iron-gall family (matches
+   the page accent) so terracotta stays reserved for personal-action
+   moments. The trigger is intentionally NOT in the shared pill rule
+   further down (which sizes everything to 11px / 3×10) — it has its
+   own scale. */
 .cell-filter-menu-trigger {
-  background: var(--surface, #fff);
-  color: var(--muted, #6b7280);
-  border: 1px solid var(--border, #e5e7eb);
+  display: inline-block;
+  vertical-align: middle;
+  box-sizing: border-box;
+  font-family: inherit;
+  line-height: 1.2;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  padding: 5px 14px;
 }
 .cell-filter-menu-trigger:hover {
-  color: var(--text, #111);
-  border-color: var(--text, #111);
+  color: var(--fg);
+  border-color: var(--fg);
 }
-/* When at least one predicate is active, the trigger reads as "primed"
-   so the user can see at a glance that the table is filtered without
-   having to open the popover. */
 .cell-filter-menu-trigger.has-filter {
-  background: var(--accent-warm-bg);
-  border-color: var(--accent-warm);
-  color: var(--accent-warm-strong);
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent-strong);
   font-weight: 500;
 }
 .cell-filter-menu-trigger.has-filter:hover {
-  background: #ebcdbf;
-  border-color: var(--accent-warm-strong);
+  background: #c4cce0;
+  border-color: var(--accent-strong);
 }
 .cell-filter-menu-popover {
   position: absolute;
@@ -3046,6 +3074,39 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   letter-spacing: 0.06em;
   color: var(--muted);
 }
+/* Native <details> + <summary> render for collapsible recipe sections.
+   Hide the default disclosure triangle and roll our own chevron so the
+   header lines up with the rest of the page typography. */
+details.tour-section > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+details.tour-section > summary::-webkit-details-marker { display: none; }
+details.tour-section > summary::before {
+  content: "›";
+  display: inline-block;
+  font-size: 16px;
+  line-height: 1;
+  width: 12px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+details.tour-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+details.tour-section > summary > h4 {
+  margin: 0;
+}
+.tour-section-count {
+  color: var(--muted);
+  font-weight: var(--fw-body, 400);
+  letter-spacing: 0;
+  text-transform: none;
+}
 
 .tour-grid {
   display: grid;
@@ -3102,6 +3163,40 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .tour-card.is-personal {
   border-style: dashed;
   border-color: var(--accent-warm);
+}
+/* Inline Undo-delete placeholder card. Replaces a personal RecipeCard
+   in-place during the soft-delete undo window so the grid layout
+   doesn't reflow. Muted styling + a countdown bar at the bottom
+   communicate "this is a transient state, click Undo or wait". */
+.tour-card.tour-card-pending {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+}
+.tour-card.tour-card-pending h5 {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+}
+.tour-card.tour-card-pending .tour-desc em {
+  font-style: normal;
+}
+.tour-card-countdown {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: var(--accent-warm);
+  transform-origin: left center;
+  animation-name: tour-card-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes tour-card-countdown {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
 }
 .tour-card-actions {
   display: flex;
@@ -5481,7 +5576,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
    inline-flex strips whitespace between flex items, which butted
    the suffix span up against the preceding word ("FilterScope"
    instead of "Filter Scope"). */
-.cell-filter-menu-trigger,
+/* Shared pill base for tertiary action pills. The Scope trigger
+   (.cell-filter-menu-trigger) was previously in this list but now uses
+   its own larger-button styling — see the .cell-filter-menu rules
+   earlier in the file. */
 .saved-sets-menu-trigger,
 .explore-ngl-pill,
 .explore-clear-pill,
@@ -5839,85 +5937,3 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-weight: 500;
 }
 .sidebar-examples-link a:hover { text-decoration: underline; }
-
-/* ---- Undo toast (personal-recipe soft-delete) ------------------------ */
-
-/* Bottom-right anchored stack. Each toast slides in from the right on
-   mount; the countdown bar at the bottom shrinks to 0 over the remaining
-   undo window. Neutral chrome (not warm) — undo is a recovery affordance,
-   not a personal-action moment. */
-.undo-toast-stack {
-  position: fixed;
-  bottom: 16px;
-  right: 16px;
-  z-index: 2000;
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 8px;
-  pointer-events: none;
-}
-.undo-toast {
-  pointer-events: auto;
-  min-width: 280px;
-  max-width: 360px;
-  background: var(--fg);
-  color: var(--bg);
-  border-radius: var(--r-md, 6px);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
-  overflow: hidden;
-  animation: undo-toast-in 180ms ease-out;
-}
-.undo-toast-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 14px;
-  font-size: 13px;
-}
-.undo-toast-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.undo-toast-text strong {
-  font-weight: 600;
-}
-.undo-toast-action {
-  flex-shrink: 0;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  color: var(--bg);
-  padding: 3px 12px;
-  border-radius: var(--r-sm, 4px);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.undo-toast-action:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.6);
-}
-/* Countdown bar — width animates from 100% to 0% over the undo window.
-   `animation-duration` is set inline per-toast based on `expiresAt - now`
-   so the bar tracks real remaining time, not always the full window. */
-.undo-toast-countdown {
-  height: 2px;
-  background: var(--accent-warm);
-  width: 100%;
-  transform-origin: left center;
-  animation-name: undo-toast-countdown;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
-@keyframes undo-toast-in {
-  from { transform: translateX(20px); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
-}
-@keyframes undo-toast-countdown {
-  from { transform: scaleX(1); }
-  to   { transform: scaleX(0); }
-}

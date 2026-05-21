@@ -239,7 +239,13 @@ export function NeuronView() {
           >
             {decorationsLabel} <span className="chevron">{decorationsOpen ? "▾" : "▸"}</span>
           </button>
-          <button type="submit" className="neuron-load-btn">Load Cell</button>
+          <button
+            type="submit"
+            className="neuron-load-btn"
+            title="Load connectivity for the entered root or cell id"
+          >
+            Load Cell
+          </button>
           {connectivity.data && (
             <SummaryInline bundle={connectivity.data} decorationTables={decorationTables} />
           )}
@@ -279,6 +285,7 @@ export function NeuronView() {
               type="button"
               onClick={() => setDraftDecorations([...draftDecorations, ""])}
               disabled={!tables.data}
+              title="Add another decoration table to join onto partner rows"
             >+ add decoration</button>
           </fieldset>
         )}
@@ -343,6 +350,7 @@ export function NeuronView() {
                   className={workbenchTab === "plots" ? "active" : ""}
                   aria-selected={workbenchTab === "plots"}
                   onClick={() => setWorkbenchTab("plots")}
+                  title="Show the analytics plot rail"
                 >
                   Plots
                 </button>
@@ -352,6 +360,7 @@ export function NeuronView() {
                   className={workbenchTab === "partners" ? "active" : ""}
                   aria-selected={workbenchTab === "partners"}
                   onClick={() => setWorkbenchTab("partners")}
+                  title="Show the partner table"
                 >
                   Partners
                 </button>

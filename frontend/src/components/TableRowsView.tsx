@@ -785,11 +785,19 @@ export function TableRowsView() {
                 ? `${rows.length.toLocaleString()} rows`
                 : `${filteredCount.toLocaleString()} of ${rows.length.toLocaleString()} rows`}
             </span>
-            <button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>‹</button>
+            <button
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              title="Previous page"
+            >‹</button>
             <span className="page">
               {table.getState().pagination.pageIndex + 1} / {Math.max(1, table.getPageCount())}
             </span>
-            <button onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>›</button>
+            <button
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              title="Next page"
+            >›</button>
             {(columnFilters.length > 0 || filterDraft.length > 0 || sorting.length > 0 || selectedRowIds.length > 0) && (
               <button
                 onClick={() => {
@@ -809,6 +817,7 @@ export function TableRowsView() {
                   setSorting([]);
                   setRowSelection({});
                 }}
+                title="Clear all filters, sorting, and row selection"
               >
                 Reset
               </button>
@@ -873,7 +882,17 @@ export function TableRowsView() {
                     const indicator = sort === "asc" ? " ▲" : sort === "desc" ? " ▼" : "";
                     return (
                       <th key={header.id}>
-                        <button className="sortable" onClick={header.column.getToggleSortingHandler()}>
+                        <button
+                          className="sortable"
+                          onClick={header.column.getToggleSortingHandler()}
+                          title={
+                            sort === "asc"
+                              ? "Sorted ascending — click to sort descending"
+                              : sort === "desc"
+                                ? "Sorted descending — click to clear sort"
+                                : "Click to sort by this column"
+                          }
+                        >
                           {flexRender(header.column.columnDef.header, header.getContext())}
                           {indicator}
                         </button>

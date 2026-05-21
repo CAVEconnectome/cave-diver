@@ -51,6 +51,7 @@ export function DecorationPicker({ ds, matVersion, attached, onChange }: Props) 
                 type="button"
                 className="explore-dec-chip-remove"
                 aria-label={`Detach ${name}`}
+                title={`Detach ${name}`}
                 onClick={() => onChange(attached.filter((t) => t !== name))}
               >
                 ×

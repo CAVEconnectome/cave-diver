@@ -42,6 +42,7 @@ export function ExamplesPage() {
           type="button"
           onClick={() => setKindFilter(null)}
           className={kind ? "" : "active"}
+          title="Show examples of every kind"
         >
           All
         </button>
@@ -49,6 +50,7 @@ export function ExamplesPage() {
           type="button"
           onClick={() => setKindFilter("connectivity")}
           className={kind === "connectivity" ? "active" : ""}
+          title="Show only Neuron View / connectivity examples"
         >
           Connectivity
         </button>
@@ -56,6 +58,7 @@ export function ExamplesPage() {
           type="button"
           onClick={() => setKindFilter("explorer")}
           className={kind === "explorer" ? "active" : ""}
+          title="Show only Feature Explorer examples"
         >
           Explorer
         </button>

@@ -562,6 +562,7 @@ export function GrowSelectionPanel({
               type="button"
               className="explore-grow-feature-reset"
               onClick={resetFeatures}
+              title="Restore the feature selection to the manifest's default set"
             >
               Reset to manifest default
             </button>
@@ -575,15 +576,24 @@ export function GrowSelectionPanel({
           className="primary"
           onClick={compute}
           disabled={computeDisabled}
+          title="Compute distances from the current seeds across all cells in scope"
         >
           {mutation.isPending ? "Computing…" : "Compute distances"}
         </button>
         {distanceProbe && (
           <>
-            <button type="button" onClick={resetToSeeds}>
+            <button
+              type="button"
+              onClick={resetToSeeds}
+              title="Re-anchor the distance probe back to the current selection"
+            >
               Reset to seeds
             </button>
-            <button type="button" onClick={() => onDistanceProbe(null)}>
+            <button
+              type="button"
+              onClick={() => onDistanceProbe(null)}
+              title="Clear the distance probe and discard computed distances"
+            >
               Clear probe
             </button>
           </>

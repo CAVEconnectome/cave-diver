@@ -101,6 +101,7 @@ export function ExampleCard({ ds, example }: { ds: string; example: Example }) {
               aria-label={expanded ? "Collapse description" : "Expand description"}
               aria-expanded={expanded}
               onClick={(e) => { e.stopPropagation(); setExpanded((s) => !s); }}
+              title={expanded ? "Collapse description" : "Expand description"}
             >
               {expanded ? "▴" : "▾"}
             </button>

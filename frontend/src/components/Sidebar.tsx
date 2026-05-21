@@ -6,7 +6,7 @@ import {
   useTours,
   useVersions,
 } from "../api/queries";
-import type { Recipe } from "../api/types";
+import type { Recipe, RecipeKind } from "../api/types";
 import { useNglLink } from "../hooks/useNglLink";
 import { parseMatVersion, useSetUrlParams, useSwitchDatastack, useUrlParam } from "../hooks/useUrlState";
 import type { ViewFamily } from "../hooks/useViewSnapshot";
@@ -14,7 +14,6 @@ import { applyTourConfigToParams } from "../tours/urlMint";
 import { useApplyRecipe } from "../tours/useApplyRecipe";
 import {
   listForDsAndKind,
-  softRemove as softRemovePersonalRecipe,
   subscribe as subscribePersonalRecipes,
 } from "../tours/personalRecipes";
 import { urlHasRecipeContent } from "../tours/recipeFromUrl";
@@ -115,7 +114,11 @@ export function Sidebar({ navigateToView, collapsed, onToggleCollapsed }: Sideba
             {datastacks.isError && (
               <div className="error-row">
                 <span>datastack list failed: {datastacks.error instanceof Error ? datastacks.error.message : "unknown"}</span>
-                <button onClick={() => datastacks.refetch()} disabled={datastacks.isFetching}>
+                <button
+                  onClick={() => datastacks.refetch()}
+                  disabled={datastacks.isFetching}
+                  title="Retry fetching the datastack list"
+                >
                   {datastacks.isFetching ? "retrying…" : "retry"}
                 </button>
               </div>
@@ -150,7 +153,11 @@ export function Sidebar({ navigateToView, collapsed, onToggleCollapsed }: Sideba
             {versions.isError && (
               <div className="error-row">
                 <span>versions failed: {versions.error instanceof Error ? versions.error.message : "unknown"}</span>
-                <button onClick={() => versions.refetch()} disabled={versions.isFetching}>
+                <button
+                  onClick={() => versions.refetch()}
+                  disabled={versions.isFetching}
+                  title="Retry fetching the materialization versions"
+                >
                   {versions.isFetching ? "retrying…" : "retry"}
                 </button>
               </div>
@@ -181,14 +188,14 @@ export function Sidebar({ navigateToView, collapsed, onToggleCollapsed }: Sideba
               disabled={!ds}
               title="Resumes your last neuron view if you've been here before"
             >
-              Neuron view
+              Neuron View
             </button>
             <button
               onClick={() => navigateToView("tables")}
               disabled={!ds}
               title="Resumes your last table browser view if you've been here before"
             >
-              Table browser
+              Table Browser
             </button>
             <button
               onClick={() => navigateToView("explore")}
@@ -248,6 +255,7 @@ function NeutralNeuroglancerLink({ ds, mv }: NeutralNeuroglancerLinkProps) {
           ngl.open({ kind: "segments", ds, matVersion, rootIds: [] })
         }
         disabled={ngl.isPending}
+        title="Open Neuroglancer with this datastack's default image and segmentation layers (no cells pinned)"
       >
         {ngl.isPending ? "opening…" : "Open Datastack in Neuroglancer ↗"}
       </button>
@@ -347,12 +355,48 @@ function formatResetSummary(params: URLSearchParams): string {
  * dominate the sidebar's vertical space. Per-session collapse state is
  * native browser behavior; we don't persist it.
  */
+// Label the recipes section by the kind(s) applicable on this route:
+// "Neuron Recipes" on /neuron, "Feature Recipes" on /explore. The
+// landing page is the only place that legitimately mixes both, and
+// there we fall back to the unqualified "Recipes" since the cards
+// already render a per-kind chip. Returns "" when there are no
+// applicable kinds — caller bails before rendering anyway.
+function recipesSectionLabel(kinds: Set<RecipeKind>): string {
+  if (kinds.size === 0) return "";
+  if (kinds.size === 1) {
+    if (kinds.has("connectivity")) return "Neuron Recipes";
+    if (kinds.has("explorer")) return "Feature Recipes";
+  }
+  return "Recipes";
+}
+
 function SidebarRecipes({ ds, mv }: { ds: string; mv: string | null }) {
+  const applicableKinds = useApplicableRecipeKinds();
+  // Routes with no recipe concept (Table Browser, Examples, 404) return
+  // an empty kind set from the hook. Bail before firing the tours
+  // query — there's nothing to show and no need to warm the cache for
+  // a section the user can't act on from here.
+  const sectionLabel = recipesSectionLabel(applicableKinds);
+  if (applicableKinds.size === 0) return null;
+  return (
+    <SidebarRecipesBody ds={ds} mv={mv} applicableKinds={applicableKinds} sectionLabel={sectionLabel} />
+  );
+}
+
+function SidebarRecipesBody({
+  ds,
+  mv,
+  applicableKinds,
+  sectionLabel,
+}: {
+  ds: string;
+  mv: string | null;
+  applicableKinds: Set<RecipeKind>;
+  sectionLabel: string;
+}) {
   const tours = useTours(ds);
   const [root] = useUrlParam("root");
-  const navigate = useNavigate();
   const applyRecipe = useApplyRecipe();
-  const applicableKinds = useApplicableRecipeKinds();
   // Personal recipes live in localStorage. Subscribe to mutation events
   // emitted by `personalRecipes.save/remove` so the list re-renders when
   // ShareMenu (a sibling, not a parent) writes a new entry.
@@ -367,14 +411,7 @@ function SidebarRecipes({ ds, mv }: { ds: string; mv: string | null }) {
     applicableKinds.has(r.kind),
   );
 
-  // Always show the disclosure once we know about either list. Loading
-  // state is tracked separately so the user sees "loading…" rather than
-  // a missing section while tours.data is in flight.
   const toursLoading = tours.isLoading;
-  if (personalRecipes.length === 0 && builtinRecipes.length === 0 && !toursLoading) {
-    return null;
-  }
-
   // useApplyRecipe handles both apply-onto-loaded-cell and open-without-cell
   // internally (via the adapter's hasNavContext + buildOpenParams). The
   // sidebar just renders the right CTA label so the user knows what's
@@ -383,28 +420,34 @@ function SidebarRecipes({ ds, mv }: { ds: string; mv: string | null }) {
   const onClick = (r: Recipe) => {
     applyRecipe(r);
   };
-  // Silence unused-binding lints — `mv` and `navigate` are no longer
-  // needed here directly, but kept in the function signature for
-  // future kind-specific routing decisions.
+  // `mv` is kept in the prop signature for future kind-specific routing
+  // decisions but isn't read here directly — silence the lint.
   void mv;
-  void navigate;
   const total = personalRecipes.length + builtinRecipes.length;
-  const summaryText =
-    toursLoading && builtinRecipes.length === 0
-      ? `Recipes (${personalRecipes.length}+…)`
-      : `Recipes (${total})`;
+  // Show `(N+…)` while built-in tours are still in flight so the count
+  // visibly grows — avoids a misleading `(0)` that flips to `(N)` once
+  // the cache warms.
+  const summaryText = toursLoading
+    ? `${sectionLabel} (${total}+…)`
+    : `${sectionLabel} (${total})`;
+
+  // The Built-in section is omitted entirely when this datastack ships
+  // no built-in recipes — a missing header reads as "nothing here" more
+  // cleanly than an empty subsection with a "no built-ins" hint. The
+  // My Recipes section stays mounted even when empty so the
+  // Save-from-Share-menu workflow is discoverable.
+  const showBuiltin = builtinRecipes.length > 0 || toursLoading;
 
   return (
     <details className="sidebar-recipes" open>
       <summary>{summaryText}</summary>
-      {personalRecipes.length > 0 ? (
-        <div className="recipes-group">
-          <h4 className="sidebar-recipes-group">My recipes</h4>
+      <div className="recipes-group">
+        <h4 className="sidebar-recipes-group">My recipes</h4>
+        {personalRecipes.length > 0 ? (
           <ul>
             {personalRecipes.map((r) => (
               <PersonalRecipeRow
                 key={r.id}
-                ds={ds}
                 recipe={r}
                 root={root}
                 canApply={canApply}
@@ -412,61 +455,52 @@ function SidebarRecipes({ ds, mv }: { ds: string; mv: string | null }) {
               />
             ))}
           </ul>
-        </div>
-      ) : null}
-      <div className="recipes-group">
-        <h4 className="sidebar-recipes-group">Built-in recipes</h4>
-        {builtinRecipes.length > 0 ? (
-          <ul>
-            {builtinRecipes.map((r) => (
-              <li key={r.id}>
-                <button
-                  type="button"
-                  onClick={() => onClick(r)}
-                  title={
-                    canApply
-                      ? `Apply: overlay onto cell ${root!.slice(0, 6)}…${root!.slice(-4)}` +
-                        (r.description ? `\n\n${r.description}` : "")
-                      : "Open: preconfigure the workspace, then pick a cell" +
-                        (r.description ? `\n\n${r.description}` : "")
-                  }
-                >
-                  {r.title}
-                  <span className="sidebar-recipes-cta">{canApply ? "Apply" : "Open"}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : toursLoading ? (
-          <p className="muted">Loading…</p>
         ) : (
           <p className="muted sidebar-recipes-empty">
-            No built-in recipes for this datastack. Visit{" "}
-            <button
-              type="button"
-              className="link-button"
-              onClick={() =>
-                navigate(`/${ds ? `?ds=${ds}${mv ? `&mv=${mv}` : ""}` : ""}`)
-              }
-            >
-              Recipes
-            </button>{" "}
-            to load one from a YAML file.
+            No saved recipes yet — use <strong>Share / Save</strong> above
+            to save the current view.
           </p>
         )}
       </div>
+      {showBuiltin && (
+        <div className="recipes-group">
+          <h4 className="sidebar-recipes-group">Built-in recipes</h4>
+          {toursLoading && builtinRecipes.length === 0 ? (
+            <p className="muted">Loading…</p>
+          ) : (
+            <ul>
+              {builtinRecipes.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => onClick(r)}
+                    title={
+                      canApply
+                        ? `Apply: overlay onto cell ${root!.slice(0, 6)}…${root!.slice(-4)}` +
+                          (r.description ? `\n\n${r.description}` : "")
+                        : "Open: preconfigure the workspace, then pick a cell" +
+                          (r.description ? `\n\n${r.description}` : "")
+                    }
+                  >
+                    {r.title}
+                    <span className="sidebar-recipes-cta">{canApply ? "Apply" : "Open"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </details>
   );
 }
 
 function PersonalRecipeRow({
-  ds,
   recipe,
   root,
   canApply,
   onApply,
 }: {
-  ds: string;
   recipe: Recipe;
   root: string | null;
   canApply: boolean;
@@ -490,9 +524,6 @@ function PersonalRecipeRow({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-  const onDelete = () => {
-    softRemovePersonalRecipe(ds, recipe.id);
-  };
   return (
     <li className="sidebar-recipes-personal">
       <button
@@ -511,7 +542,6 @@ function PersonalRecipeRow({
       </button>
       <div className="sidebar-recipes-row-actions">
         <button type="button" onClick={onDownload} title="Download as YAML">YAML</button>
-        <button type="button" onClick={onDelete} title="Delete this personal recipe">×</button>
       </div>
     </li>
   );

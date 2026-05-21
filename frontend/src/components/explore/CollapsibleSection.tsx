@@ -86,7 +86,13 @@ export function CollapsibleSection({
           className="rail-section-header"
           onClick={() => toggleable && setOpen((v) => !v)}
           disabled={!enabled}
-          title={!enabled ? disabledHint : undefined}
+          title={
+            !enabled
+              ? disabledHint
+              : open
+                ? `Collapse ${title}`
+                : `Expand ${title}`
+          }
           aria-expanded={open}
         >
           <span className="rail-section-chevron" aria-hidden="true">

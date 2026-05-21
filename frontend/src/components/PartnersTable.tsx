@@ -795,18 +795,37 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
         {enableNglAction && (direction === "both" ? (
           <>
             <span className="scope">Open in NGL ({bothScope.label}):</span>
-            <button onClick={() => open("inputs", bothScope.ids)}>input syns</button>
-            <button onClick={() => open("outputs", bothScope.ids)}>output syns</button>
-            <button onClick={() => open("connectivity", bothScope.ids)}>both directions</button>
+            <button
+              onClick={() => open("inputs", bothScope.ids)}
+              title={`Open Neuroglancer showing input synapses onto the ${bothScope.label}`}
+            >
+              input syns
+            </button>
+            <button
+              onClick={() => open("outputs", bothScope.ids)}
+              title={`Open Neuroglancer showing output synapses from the ${bothScope.label}`}
+            >
+              output syns
+            </button>
+            <button
+              onClick={() => open("connectivity", bothScope.ids)}
+              title={`Open Neuroglancer showing both input and output synapses for the ${bothScope.label}`}
+            >
+              both directions
+            </button>
           </>
         ) : (
           <>
-            <button onClick={() => open(linkTemplate)}>
+            <button
+              onClick={() => open(linkTemplate)}
+              title={`Open all ${rows.length} ${directionLabel} partner${rows.length === 1 ? "" : "s"} in Neuroglancer`}
+            >
               Open all {directionLabel} synapses ({rows.length}) in NGL
             </button>
             {filterIsActive && (
               <button
                 onClick={() => open(linkTemplate, filteredRows.map((r) => r.id))}
+                title={`Open the ${filteredRows.length} partner${filteredRows.length === 1 ? "" : "s"} matching the current filter in Neuroglancer`}
               >
                 Open {filteredRows.length} filtered in NGL
               </button>
@@ -814,6 +833,11 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
             <button
               onClick={() => open(linkTemplate, effectiveSelectedIds)}
               disabled={effectiveSelectedIds.length === 0}
+              title={
+                effectiveSelectedIds.length === 0
+                  ? "Select partners (row checkboxes or a plot brush) to open them in Neuroglancer"
+                  : `Open the ${effectiveSelectedIds.length} selected partner${effectiveSelectedIds.length === 1 ? "" : "s"} in Neuroglancer`
+              }
             >
               Open {effectiveSelectedIds.length} selected in NGL
             </button>
@@ -852,6 +876,7 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
               setColumnFilters([]);
               setSorting([]);
             }}
+            title="Clear all column filters and sorting"
           >
             Reset
           </button>
@@ -863,7 +888,12 @@ export function PartnersTable({ ds, rootId, matVersion, direction, rows, columnG
           </summary>
           <div className="columns-menu-popover">
             <div className="columns-menu-actions">
-              <button type="button" onClick={showAllColumns} disabled={effectiveHidden.size === 0}>
+              <button
+                type="button"
+                onClick={showAllColumns}
+                disabled={effectiveHidden.size === 0}
+                title="Restore every hidden column"
+              >
                 show all
               </button>
             </div>

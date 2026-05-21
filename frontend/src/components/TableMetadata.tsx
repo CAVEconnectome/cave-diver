@@ -51,6 +51,7 @@ export function TableDescription({
           type="button"
           className="link-button"
           onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Collapse the description" : "Show the full description"}
         >
           {expanded ? " less" : " more"}
         </button>
