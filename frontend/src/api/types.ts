@@ -615,14 +615,19 @@ export interface DistanceToSetArgs {
   ds: string;
   featureTableId: string;
   cellIds: string[];
-  space: "raw" | "pca" | "mahalanobis";
+  space: "raw" | "pca" | "mahalanobis" | "embedding";
+  /** Required when ``space === "embedding"`` — distance is computed in
+   *  this embedding's 2-D axes. Ignored for the other spaces. */
+  embeddingId?: string;
   /** PCA only: fraction of total variance the kept components must
    *  explain (0..1). The server resolves the smallest K that hits the
    *  threshold and returns both numbers in the response. Default 0.9
    *  if absent. */
   variance?: number;
   reduction: "centroid" | "nearest" | "mean";
-  /** Optional feature-column override; absent = manifest default. */
+  /** Optional feature-column override; absent = manifest default.
+   *  Ignored for ``space === "embedding"`` (pinned to the embedding
+   *  axes). */
   featureColumns?: string[];
   /** Top-K truncation. Server returns only the closest ``limit`` cells
    *  (default 2000, max 50000). Even the closest 10% of the universe
@@ -639,7 +644,7 @@ export interface DistanceToSetResponse {
    *  the returned slice. */
   cell_ids: string[];
   distances: number[];
-  space: "raw" | "pca" | "mahalanobis";
+  space: "raw" | "pca" | "mahalanobis" | "embedding";
   /** Requested variance fraction (echoed); null when ``space !== "pca"``. */
   variance: number | null;
   /** Resolved component count after variance threshold; null when

@@ -293,9 +293,9 @@ def scatter(ds: str, feature_table_id: str, embedding_id: str):
       decoration column (drives the cell_id → root_id resolver).
 
     No CAVE call when channels reference only parquet columns. Backed
-    by ``dcv_embedding_frame_cache`` (immutable L1 + L2 GCS), so cold
-    pods see a one-time parquet read and every subsequent request is
-    dict-fast.
+    by ``dcv_embedding_frame_cache`` (immutable, per-pod L1), so the
+    first request on a pod reads the parquet once and every subsequent
+    request is dict-fast.
 
     Response shape::
 
@@ -1367,12 +1367,16 @@ def distance_to_set(ds: str, feature_table_id: str):
     - ``mahalanobis`` — Euclidean on whitened (all components, scaled by
       1/singular_value) features. Equivalent to Mahalanobis distance on
       the z-scored input; corrects for correlated feature dimensions.
+    - ``embedding``   — Euclidean in the embedding's own 2-D coordinates
+      (the axes the scatter renders), used as-is with no scaling.
+      "Pick cells near my seed on the scatter." Requires ``embedding_id``.
 
     Body shape::
 
         {
           "cell_ids":   [str|int, ...],
-          "space":      "raw" | "pca" | "mahalanobis",
+          "space":      "raw" | "pca" | "mahalanobis" | "embedding",
+          "embedding_id": str   (required when space == "embedding"),
           "variance":   float (0..1, default 0.9; ignored unless pca).
                         Fraction of total variance the top-K PCA
                         components must explain; the server resolves
@@ -1438,12 +1442,33 @@ def distance_to_set(ds: str, feature_table_id: str):
             ) from exc
 
     space = body.get("space", "pca")
-    if space not in ("raw", "pca", "mahalanobis"):
+    if space not in ("raw", "pca", "mahalanobis", "embedding"):
         raise ApiError(
             422,
             "invalid_space",
-            f"space must be one of raw | pca | mahalanobis; got {space!r}",
+            f"space must be one of raw | pca | mahalanobis | embedding; "
+            f"got {space!r}",
         )
+
+    # "embedding" space: distance in the embedding's own 2-D coordinates
+    # (the axes the scatter shows) — "pick cells close to my seed on the
+    # scatter". Reuses the raw-Euclidean machinery with the feature
+    # matrix pinned to the embedding's axis columns and no scaling: the
+    # coordinates are compared as-is, in their native units.
+    embedding_axes: list[str] | None = None
+    if space == "embedding":
+        embedding_id = body.get("embedding_id")
+        if not embedding_id:
+            raise ApiError(
+                422,
+                "missing_embedding_id",
+                "space 'embedding' requires 'embedding_id' in the request body",
+            )
+        try:
+            _ft_e, emb = src.resolve_embedding(feature_table_id, embedding_id)
+        except KeyError as exc:
+            raise ApiError(404, "embedding_not_found", str(exc)) from exc
+        embedding_axes = list(emb.axes)
 
     reduction = body.get("reduction", "centroid")
     if reduction not in ("centroid", "nearest", "mean"):
@@ -1523,16 +1548,26 @@ def distance_to_set(ds: str, feature_table_id: str):
     # out of standardization (sets it to false) and hasn't set
     # ``scaling``. Tables that leave ``standardize`` at its default land
     # at ``zscore`` either way — no silent behavior change.
-    scaling = ft.scaling
-    if not ft.standardize and scaling == "zscore":
-        scaling = "raw"
+    # Embedding space pins the matrix to the embedding axes with no
+    # standardization (the coordinates ARE the metric); every other
+    # space uses the table's configured feature columns + scaling.
+    if space == "embedding":
+        matrix_feature_columns = embedding_axes
+        matrix_scaling = "raw"
+        matrix_clip = None
+    else:
+        matrix_feature_columns = feature_columns
+        matrix_scaling = ft.scaling
+        if not ft.standardize and matrix_scaling == "zscore":
+            matrix_scaling = "raw"
+        matrix_clip = clip_percentiles
     try:
         matrix = get_matrix(
             ds,
             ft,
-            feature_columns=feature_columns,
-            scaling=scaling,
-            clip_percentiles=clip_percentiles,
+            feature_columns=matrix_feature_columns,
+            scaling=matrix_scaling,
+            clip_percentiles=matrix_clip,
             cache_ds=cfg.cache_alias or ds,
         )
     except ValueError as exc:
@@ -1541,7 +1576,9 @@ def distance_to_set(ds: str, feature_table_id: str):
     svd = None
     resolved_k = None
     variance_explained = None
-    if space != "raw":
+    # raw + embedding are plain Euclidean — no SVD. pca / mahalanobis
+    # both ride the cached SVD.
+    if space not in ("raw", "embedding"):
         # PCA + Mahalanobis both ride on the same cached SVD; one fit,
         # two projections. Cache key is independent of variance/k so a
         # slider drag on the SPA never refits.
@@ -1551,11 +1588,15 @@ def distance_to_set(ds: str, feature_table_id: str):
             # cheap; the slider response stays interactive.
             resolved_k, variance_explained = resolve_k_for_variance(svd, variance)
 
+    # `embedding` is computed via the raw-Euclidean path — its matrix is
+    # already the embedding coordinates, so the distance kernel just
+    # needs plain Euclidean on X.
+    compute_space = "raw" if space == "embedding" else space
     try:
         result = compute_distance_to_set(
             matrix,
             seed_cell_ids,
-            space=space,
+            space=compute_space,
             reduction=reduction,
             k_pca=resolved_k or 1,  # ignored when space != "pca"
             svd=svd,

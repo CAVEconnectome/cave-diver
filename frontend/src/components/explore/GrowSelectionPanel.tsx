@@ -9,27 +9,32 @@ import {
 import { DistanceCdf } from "./DistanceCdf";
 import { RangeSlider } from "./RangeSlider";
 
-export type GrowthSpace = "raw" | "pca" | "mahalanobis";
+export type GrowthSpace = "raw" | "pca" | "mahalanobis" | "embedding";
 export type GrowthReduction = "centroid" | "nearest" | "mean";
 
-// Tooltip + inline help copy. The three spaces are easy to confuse — the
+// Tooltip + inline help copy. The spaces are easy to confuse — the
 // hover tooltip is the short pitch, the inline help line under the
 // segmented control is the differentiator. The contrast we want users
 // to hold in mind:
 //   - Raw:         every feature counts; correlated ones double-count.
 //   - PCA:         drop the low-variance directions (treats them as noise).
 //   - Mahalanobis: keep every direction, rescale so each contributes equally.
+//   - Embedding:   distance on the scatter itself — the 2-D embedding axes.
 const SPACE_TOOLTIP: Record<GrowthSpace, string> = {
   raw: "Z-scored Euclidean — correlated features count twice",
   pca: "Top-K principal components — drops low-variance / noisy directions",
   mahalanobis:
     "Whitened over all components — every direction contributes equally after correlation correction",
+  embedding:
+    "Euclidean in the embedding's 2-D coordinates — cells close to the seed on the scatter",
 };
 const SPACE_HELP: Record<GrowthSpace, string> = {
   raw: "Each feature contributes once it's been z-scored, but correlated features double-count. Good as a sanity baseline.",
   pca: "Throws away the weakest directions and uses the strongest K. Smaller K = stronger denoising but more information loss.",
   mahalanobis:
     "Keeps every direction, rescaled so each carries equal weight. Use when you trust every feature and don't want to discard any axis.",
+  embedding:
+    "Distance in the embedding's own 2-D coordinates — picks cells sitting near the seed on the scatter, regardless of the underlying features.",
 };
 
 /** What lives in component state after a successful /distance_to_set call.
@@ -74,6 +79,9 @@ interface Props {
   ds: string;
   featureTableId: string;
   featureTable: FeatureTableListItem | null;
+  /** Active embedding id — required for the "embedding" distance space
+   *  (distance is computed in this embedding's 2-D axes). */
+  embeddingId: string | null;
   selectionBag: string[];
   distanceProbe: DistanceProbe | null;
   onDistanceProbe: (probe: DistanceProbe | null) => void;
@@ -110,6 +118,7 @@ export function GrowSelectionPanel({
   ds,
   featureTableId,
   featureTable,
+  embeddingId,
   selectionBag,
   distanceProbe,
   onDistanceProbe,
@@ -131,7 +140,12 @@ export function GrowSelectionPanel({
   const [topNDraft, setTopNDraft] = useState<string | null>(null);
 
   const space: GrowthSpace =
-    spaceRaw === "raw" || spaceRaw === "mahalanobis" ? spaceRaw : "pca";
+    spaceRaw === "raw" ||
+    spaceRaw === "mahalanobis" ||
+    spaceRaw === "embedding"
+      ? spaceRaw
+      : "pca";
+  const isEmbeddingSpace = space === "embedding";
   const reduction: GrowthReduction =
     reductionRaw === "nearest" || reductionRaw === "mean"
       ? reductionRaw
@@ -329,7 +343,11 @@ export function GrowSelectionPanel({
 
   const compute = async () => {
     if (selectionBag.length === 0) return;
-    if (chosenSet.size < 2) return;
+    // Embedding space doesn't use the feature picker — distance is on
+    // the embedding axes, so the ">= 2 features" gate doesn't apply;
+    // it needs an active embedding instead.
+    if (!isEmbeddingSpace && chosenSet.size < 2) return;
+    if (isEmbeddingSpace && !embeddingId) return;
     try {
       const resp = await mutation.mutateAsync({
         ds,
@@ -338,7 +356,12 @@ export function GrowSelectionPanel({
         space,
         reduction,
         variance: space === "pca" ? variance : undefined,
-        featureColumns: chosenFeatures ?? undefined,
+        embeddingId: isEmbeddingSpace
+          ? embeddingId ?? undefined
+          : undefined,
+        featureColumns: isEmbeddingSpace
+          ? undefined
+          : chosenFeatures ?? undefined,
       });
 
       // Pre-sort by distance once so both the CDF render and the
@@ -426,12 +449,12 @@ export function GrowSelectionPanel({
   const computeDisabled =
     mutation.isPending ||
     selectionBag.length === 0 ||
-    chosenSet.size < 2;
+    (isEmbeddingSpace ? !embeddingId : chosenSet.size < 2);
 
   return (
     <div className="explore-grow" aria-label="Grow selection by similarity">
       <div className="explore-grow-segmented" role="radiogroup" aria-label="Distance space">
-        {(["raw", "pca", "mahalanobis"] as const).map((s) => (
+        {(["raw", "pca", "mahalanobis", "embedding"] as const).map((s) => (
           <button
             key={s}
             type="button"
@@ -441,7 +464,13 @@ export function GrowSelectionPanel({
             onClick={() => setSpaceRaw(s === "pca" ? null : s)}
             title={SPACE_TOOLTIP[s]}
           >
-            {s === "pca" ? "PCA" : s === "raw" ? "Raw" : "Mahalanobis"}
+            {s === "pca"
+              ? "PCA"
+              : s === "raw"
+                ? "Raw"
+                : s === "mahalanobis"
+                  ? "Mahalanobis"
+                  : "Embedding"}
           </button>
         ))}
       </div>
@@ -501,7 +530,7 @@ export function GrowSelectionPanel({
         ))}
       </div>
 
-      {canPick && (
+      {canPick && !isEmbeddingSpace && (
         <details className="explore-grow-advanced">
           <summary>
             Features in distance ({chosenSet.size} of {manifestFeatures.length})
@@ -600,9 +629,15 @@ export function GrowSelectionPanel({
         )}
       </div>
 
-      {chosenSet.size < 2 && (
+      {!isEmbeddingSpace && chosenSet.size < 2 && (
         <div className="explore-grow-error">
           Pick at least two feature columns to compute distance.
+        </div>
+      )}
+      {isEmbeddingSpace && !embeddingId && (
+        <div className="explore-grow-error">
+          Pick an embedding first — embedding-space distance is computed
+          in its 2-D axes.
         </div>
       )}
       {seedIsSampled && (

@@ -102,7 +102,7 @@ def _init_l2_immutable_caches(app: Flask) -> None:
     """
     from concurrent.futures import ThreadPoolExecutor
     from .services.cache_lifecycle import retention_class_for
-    from .services.swr import LayeredSwrCache
+    from .services.swr import LayeredSwrCache, SwrCache
 
     l2 = build_l2_stores(app)
     if l2:
@@ -186,20 +186,21 @@ def _init_l2_immutable_caches(app: Flask) -> None:
         immutable=True,
     )
 
-    # Feature-explorer embedding frames. Immutable per (cache_ds, _, embedding_id,
-    # parquet_uri) — the parquet URI is the load-bearing slot and content at a
-    # URI is by-definition fixed. Cache entries are full pickled DataFrames
-    # (single-digit MB up to ~200MB for a 500k-row embedding), so the maxsize
-    # is conservative. A different parquet URI for the same embedding id
-    # (e.g. after a feature recompute that rolls out a new file) routes to a
-    # fresh entry; the old one orphans and ages out via bucket lifecycle.
-    app.extensions["dcv_embedding_frame_cache"] = LayeredSwrCache(
+    # Feature-explorer embedding frames. L1-only (per-pod) — deliberately
+    # NOT GCS/L2-backed. Unlike the caches above (which mirror expensive
+    # CAVE query results that have no bucket-resident source), an embedding
+    # frame's source IS a static GCS parquet, co-located in-region with the
+    # server. An L2 mirror would just be a second — and, pickled, usually
+    # larger — bucket copy of an already-fast read, for the marginal gain
+    # of skipping a parquet parse. So: keep the per-pod parsed-DataFrame
+    # cache, skip GCS. Immutable per (cache_ds, feature_table_id,
+    # parquet_uri); a repoint to a new parquet routes to a fresh entry.
+    # Entries are full pickled DataFrames (single-digit MB up to ~200MB
+    # for a 500k-row embedding), so maxsize is conservative.
+    app.extensions["dcv_embedding_frame_cache"] = SwrCache(
         soft_ttl=soft_unique,
         hard_ttl=soft_unique,
         maxsize=32,
-        l2=_l2_for_kind("embedding_frames"),
-        executor=writer,
-        retention_resolver=_resolve_retention,
         immutable=True,
     )
 
@@ -220,7 +221,6 @@ def _init_l2_immutable_caches(app: Flask) -> None:
     # per-mat-version table list) lives on the short-TTL `table_meta_cache`
     # in `caches.py` instead — those genuinely shift on the order of hours
     # as new materializations roll over.
-    from .services.swr import SwrCache
     soft_info = app.config["CACHE_INFO_TTL_SECONDS"]
     app.extensions["dcv_datastack_info_cache"] = SwrCache(
         soft_ttl=soft_info,
@@ -248,9 +248,9 @@ def _init_l2_immutable_caches(app: Flask) -> None:
     # (cache_ds, ft_id, feature_subset_digest) triple uniquely determines
     # the z-scored matrix + row→cell_id map (the parquet at a given URI is
     # fixed, the feature subset is the digest). The matrix isn't worth
-    # serializing to L2 — the parquet itself is L2-backed via
-    # dcv_embedding_frame_cache, and standardizing a cached frame is
-    # fast (~10-50ms for 100k cells).
+    # serializing to L2 — the parquet itself is cached per-pod via
+    # dcv_embedding_frame_cache (also L1-only), and standardizing a
+    # cached frame is fast (~10-50ms for 100k cells).
     app.extensions["dcv_embedding_matrix_cache"] = SwrCache(
         soft_ttl=0, hard_ttl=0, maxsize=32, immutable=True,
     )

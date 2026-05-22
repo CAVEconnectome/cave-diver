@@ -1207,6 +1207,7 @@ export function FeatureExplorer() {
               ds={ds}
               featureTableId={ft}
               featureTable={currentFt}
+              embeddingId={emb}
               selectionBag={selectionBag}
               distanceProbe={distanceProbe}
               onDistanceProbe={setDistanceProbe}

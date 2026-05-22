@@ -1,9 +1,13 @@
 """Parquet → DataFrame loader for feature-table data.
 
 Reads happen once per unique ``parquet_uri`` and cache to
-``dcv_embedding_frame_cache`` (immutable ``LayeredSwrCache``, L2 GCS-backed).
+``dcv_embedding_frame_cache`` (immutable ``SwrCache``, L1-only / per-pod).
 The parquet content is by-definition unique per URI, so cache hits are
-bit-identical to a fresh read — no TTL gating needed.
+bit-identical to a fresh read — no TTL gating needed. The cache is
+deliberately L1-only: the source parquet already lives in a GCS bucket
+co-located in-region with the server, so a per-pod parsed-DataFrame
+cache is enough — an L2 mirror would just be a redundant second
+(pickled, usually larger) bucket copy. See ``api/__init__.py``.
 
 The loader does *no* CAVE call. The plan calls for validating that the
 parquet's cell_id namespace matches the datastack's
@@ -60,13 +64,16 @@ def load_feature_table_frame(
 
     Notes
     -----
-    Cache key shape is ``(cache_ds, None, feature_table_id, parquet_uri)``.
-    The second slot mirrors the ``(cache_ds, mat_version, ...)`` convention
-    used by the other immutable caches so the shared retention resolver in
-    ``api/__init__.py`` short-circuits to the ``"default"`` partition
-    without a per-cache branch. ``feature_table_id`` is in the key so two
-    tables that happen to share a parquet URI (unusual, but possible
-    during dev) don't alias.
+    Cache key shape is ``(cache_ds, feature_table_id, parquet_uri)``. This
+    is an L1-only (per-pod) cache — no GCS L2 layer — so the key is just
+    an in-process dict tuple, never serialized into a path. There is no
+    ``mat_version`` slot: embedding frames are version-independent by
+    design (pinned by parquet URI, not by a materialization).
+    ``feature_table_id`` is in the key so two tables that happen to share
+    a parquet URI (unusual, but possible during dev) don't alias;
+    ``parquet_uri`` is the load-bearing slot — content at a URI is
+    by-definition fixed, and a repoint to a new file routes to a fresh
+    entry.
     """
     cache_ds = cache_ds or datastack
     key = _cache_key(cache_ds, ft)
@@ -119,7 +126,7 @@ def _ensure_source_ds(df: pd.DataFrame, default_ds: str) -> pd.DataFrame:
 
 
 def _cache_key(cache_ds: str, ft: FeatureTableSpec) -> tuple:
-    return (cache_ds, None, ft.id, ft.source.uri)
+    return (cache_ds, ft.id, ft.source.uri)
 
 
 def _read_parquet(uri: str) -> pd.DataFrame:

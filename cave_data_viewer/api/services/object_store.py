@@ -277,12 +277,11 @@ _KINDS: tuple[str, ...] = (
     "synapse",
     "spatial_features",
     "unique_values",
-    # Pickled pd.DataFrame of one embedding parquet. The parquet itself
-    # lives outside the lifecycle prefix (under `embeddings/`, not
-    # `cache/<retention>/embedding_frames/`); the cached copy here is an
-    # eviction-bounded mirror of the read so cold pods don't re-parse the
-    # parquet from scratch.
-    "embedding_frames",
+    # NOTE: embedding frames are intentionally NOT here. Their source is
+    # already a static, in-region GCS parquet, so the per-pod L1 cache
+    # (`dcv_embedding_frame_cache`, a plain SwrCache) is enough — an L2
+    # mirror would be a redundant second bucket copy. See the cache's
+    # construction in api/__init__.py.
     # Full materialized cell_id ↔ root_id universe for one
     # (datastack, mat_version). Pickled `CellUniverse` dataclass —
     # two dense dicts of ~low-six-digits of int→int pairs, single-

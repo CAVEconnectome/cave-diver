@@ -375,6 +375,9 @@ export function useDistanceToSetMutation() {
             cell_ids: args.cellIds,
             space: args.space,
             reduction: args.reduction,
+            ...(args.embeddingId !== undefined
+              ? { embedding_id: args.embeddingId }
+              : {}),
             ...(args.variance !== undefined ? { variance: args.variance } : {}),
             ...(args.limit !== undefined ? { limit: args.limit } : {}),
             ...(args.featureColumns !== undefined
