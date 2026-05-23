@@ -549,6 +549,25 @@ function RecipeCard({ ds, recipe, personal }: { ds: string; recipe: Recipe; pers
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+  const onCopy = async (): Promise<boolean> => {
+    const yaml = adapter.toYaml(recipe);
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      try {
+        await navigator.clipboard.writeText(yaml);
+        return true;
+      } catch {
+        // Fall through to prompt fallback.
+      }
+    }
+    if (typeof window !== "undefined" && "prompt" in window) {
+      window.prompt("Copy recipe YAML:", yaml);
+    }
+    return false;
+  };
   const onDelete = () => {
     softRemovePersonalRecipe(ds, recipe.id);
   };
@@ -585,15 +604,98 @@ function RecipeCard({ ds, recipe, personal }: { ds: string; recipe: Recipe; pers
         )}
         {personal && (
           <>
-            <button type="button" className="tour-secondary" onClick={onDownload} title="Download as YAML">
-              YAML
-            </button>
+            <RecipeYamlMenu onDownload={onDownload} onCopy={onCopy} />
             <button type="button" className="tour-secondary" onClick={onDelete} title="Delete this personal recipe">
               Delete
             </button>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Split YAML export affordance: Download writes a .recipe.yaml file
+ *  for archival; Copy writes the YAML text to the clipboard so it can
+ *  be pasted into another datastack's "Paste YAML" loader. */
+function RecipeYamlMenu({
+  onDownload,
+  onCopy,
+}: {
+  onDownload: () => void;
+  onCopy: () => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const handleDownload = () => {
+    onDownload();
+    setOpen(false);
+  };
+  const handleCopy = async () => {
+    const ok = await onCopy();
+    setOpen(false);
+    if (ok) {
+      setFlash("copied");
+      window.setTimeout(() => setFlash(null), 1500);
+    }
+  };
+
+  return (
+    <div className="recipe-yaml-menu" ref={popoverRef}>
+      <button
+        type="button"
+        className="tour-secondary"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Export this recipe as YAML"
+      >
+        {flash ?? "YAML ▾"}
+      </button>
+      {open && (
+        <div className="recipe-yaml-popover" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            className="recipe-yaml-option"
+            onClick={handleDownload}
+            title="Save this recipe to a .yaml file"
+          >
+            <div className="recipe-yaml-option-label">Download</div>
+            <div className="recipe-yaml-option-hint">Archive to a file</div>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="recipe-yaml-option"
+            onClick={handleCopy}
+            title="Copy YAML to the clipboard"
+          >
+            <div className="recipe-yaml-option-label">Copy</div>
+            <div className="recipe-yaml-option-hint">Move to another datastack</div>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
