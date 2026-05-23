@@ -46,9 +46,10 @@ dependencies = [
     # middle-auth-client all pull it) but isn't listed here directly —
     # nothing in our source imports it. `dfbridge`, `loguru`, `orjson`
     # were removed; none were imported in the codebase and none are
-    # transitively required.
-    "cloud-volume>=12.13.1,<13",
-    "cloud-files>=6.3.0,<7",
+    # transitively required. `cloud-volume` / `cloud-files` were similarly
+    # removed: nothing in our source imports them, and the
+    # `~/.cloudvolume/secrets/cave-secret.json` path convention is read
+    # directly by caveclient — it doesn't require the cloud-volume package.
 ]
 
 [project.scripts]
