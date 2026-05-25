@@ -116,6 +116,66 @@ wheels = [
 ]
 
 [[package]]
+name = "cave-diver"
+version = "2.2.7"
+source = { editable = "." }
+dependencies = [
+    { name = "cachetools" },
+    { name = "caveclient" },
+    { name = "flask" },
+    { name = "flask-cors" },
+    { name = "google-cloud-storage" },
+    { name = "gunicorn" },
+    { name = "middle-auth-client" },
+    { name = "nglui" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "standard-transform" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "bump-my-version" },
+    { name = "ipykernel" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+lint = [
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cachetools", specifier = ">=5.3,<6" },
+    { name = "caveclient", specifier = ">=8.0.1,<9" },
+    { name = "flask", specifier = ">=3.0,<4" },
+    { name = "flask-cors", specifier = ">=4.0,<5" },
+    { name = "google-cloud-storage", specifier = ">=2.14,<4" },
+    { name = "gunicorn", specifier = ">=21.2" },
+    { name = "middle-auth-client", specifier = ">=3.18,<4" },
+    { name = "nglui", specifier = ">=4.7.4,<5" },
+    { name = "numpy", specifier = "<3" },
+    { name = "pandas", specifier = "<4" },
+    { name = "plotly", specifier = ">=5,<7" },
+    { name = "pydantic", specifier = ">=2.5,<3" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "standard-transform", specifier = ">=1,<2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "bump-my-version" },
+    { name = "ipykernel" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+lint = [{ name = "ruff" }]
+
+[[package]]
 name = "caveclient"
 version = "8.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -543,66 +603,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/e1/48cedb2fe63626e91ded1edad159e2a4fb8b6906c4425eb7749673077ce7/cryptography-48.0.0-pp311-pypy311_pp73-manylinux_2_34_x86_64.whl", hash = "sha256:4defde8685ae324a9eb9d818717e93b4638ef67070ac9bc15b8ca85f63048355", size = 4666800, upload-time = "2026-05-04T22:59:27.474Z" },
     { url = "https://files.pythonhosted.org/packages/a2/ca/7e8365deec19afb2b2c7be7c1c0aa8f99633b54e90c570999acda93260fc/cryptography-48.0.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:db63bf618e5dea46c07de12e900fe1cdd2541e6dc9dbae772a70b7d4d4765f6a", size = 3739536, upload-time = "2026-05-04T22:59:29.61Z" },
 ]
-
-[[package]]
-name = "dash-connectivity-viewer"
-version = "2.2.7"
-source = { editable = "." }
-dependencies = [
-    { name = "cachetools" },
-    { name = "caveclient" },
-    { name = "flask" },
-    { name = "flask-cors" },
-    { name = "google-cloud-storage" },
-    { name = "gunicorn" },
-    { name = "middle-auth-client" },
-    { name = "nglui" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas" },
-    { name = "plotly" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "standard-transform" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "bump-my-version" },
-    { name = "ipykernel" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-lint = [
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cachetools", specifier = ">=5.3,<6" },
-    { name = "caveclient", specifier = ">=8.0.1,<9" },
-    { name = "flask", specifier = ">=3.0,<4" },
-    { name = "flask-cors", specifier = ">=4.0,<5" },
-    { name = "google-cloud-storage", specifier = ">=2.14,<4" },
-    { name = "gunicorn", specifier = ">=21.2" },
-    { name = "middle-auth-client", specifier = ">=3.18,<4" },
-    { name = "nglui", specifier = ">=4.7.4,<5" },
-    { name = "numpy", specifier = "<3" },
-    { name = "pandas", specifier = "<4" },
-    { name = "plotly", specifier = ">=5,<7" },
-    { name = "pydantic", specifier = ">=2.5,<3" },
-    { name = "pyyaml", specifier = ">=6.0,<7" },
-    { name = "standard-transform", specifier = ">=1,<2" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "bump-my-version" },
-    { name = "ipykernel" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-lint = [{ name = "ruff" }]
 
 [[package]]
 name = "debugpy"
