@@ -87,7 +87,10 @@ export function Sidebar({ navigateToView, collapsed, onToggleCollapsed }: Sideba
       ) : (
         <>
           <div className="sidebar-header">
-            <h1>CAVE Diver</h1>
+            <div className="sidebar-brand">
+              <img src="/cave-diver.svg" alt="" className="brand-mark" width="28" height="28" />
+              <h1>CAVE Diver</h1>
+            </div>
             <button
               className="sidebar-toggle"
               onClick={onToggleCollapsed}

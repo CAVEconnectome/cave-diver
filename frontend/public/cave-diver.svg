@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <mask id="neuron-cut" maskUnits="userSpaceOnUse" x="-4" y="-4" width="72" height="72">
+      <rect x="-4" y="-4" width="72" height="72" fill="white"/>
+      <circle cx="32" cy="40" r="7.5" fill="black"/>
+      <g stroke="black" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M 32 40 Q 18 30 4 12"/>
+        <path d="M 32 40 Q 46 30 60 12"/>
+        <path d="M 32 40 Q 18 38 0 42"/>
+        <path d="M 32 40 Q 46 38 64 42"/>
+        <path d="M 32 40 Q 18 54 2 64"/>
+        <path d="M 32 40 Q 46 54 62 64"/>
+        <path d="M 32 40 Q 30 32 32 22 Q 22 16 12 2"/>
+        <path d="M 32 22 Q 42 16 52 2"/>
+      </g>
+    </mask>
+  </defs>
+  <path d="M 6 60 L 6 32 Q 6 8 30 8 Q 58 9 58 34 L 58 60 Z" fill="#1d2d4d" mask="url(#neuron-cut)"/>
+</svg>

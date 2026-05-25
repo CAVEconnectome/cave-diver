@@ -174,15 +174,22 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .sidebar h1 {
-  font-size: 16px;
+  font-size: 20px;
+  line-height: 1;
   font-weight: var(--fw-title);
-  margin: 0 0 8px;
+  margin: 0;
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .sidebar-toggle {
